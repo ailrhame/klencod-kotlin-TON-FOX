@@ -970,23 +970,6 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
         Lesson(6, "الاحتراف", "حسّن وضوح كتابتك.", listOf("اختر طريقة ثابتة.", "راجع الكلمات الملتبسة.", "لا تعتمد على التحويل الحرفي."), "اشتقتلك", "eshta2tellak", "advanced")
     )
 
-    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
-        super.onActivityResult(requestCode, resultCode, data)
-        if (resultCode != RESULT_OK) return
-        when (requestCode) {
-            REQ_VOICE -> {
-                val spoken = data?.getStringArrayListExtra(RecognizerIntent.EXTRA_RESULTS)?.firstOrNull()
-                if (!spoken.isNullOrBlank()) { showTranslator(); sourceText?.setText(spoken) }
-            }
-            REQ_IMPORT -> data?.data?.let { importBackupFrom(it) }
-            REQ_CAMERA_OCR -> {
-                val text = data?.getStringExtra("OCR_TEXT") ?: ""
-                if (text.isNotBlank()) { pendingOcrResult = text; showTranslator(); sourceText?.setText(text) }
-            }
-            REQ_PICK_AVATAR -> {}
-        }
-    }
-
 // (part 2 starts here)
 
 override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
@@ -2068,11 +2051,10 @@ private fun showDictionary() {
         next()
     }
 
-    // ============================================================
-    // [CONTINUE IN PART 4]
-    // ============================================================
-    // to be continued in Part 4
-}
+// ============================================================
+// [CONTINUE IN PART 4]
+// ============================================================
+// to be continued in Part 4
     fun next() {
         if (pos >= qs.size) {
             val allCorrect = correct == qs.size
@@ -2576,22 +2558,6 @@ private fun wrapText(text: String, paint: Paint, maxWidth: Float): List<String> 
     if (current.isNotEmpty()) lines.add(current.toString())
     return lines
 }
-    private fun wrapText(text: String, paint: Paint, maxWidth: Float): List<String> {
-        val words = text.split(" ")
-        val lines = mutableListOf<String>()
-        var current = StringBuilder()
-        for (word in words) {
-            val test = if (current.isEmpty()) word else "$current $word"
-            if (paint.measureText(test) <= maxWidth) {
-                current = StringBuilder(test)
-            } else {
-                if (current.isNotEmpty()) lines.add(current.toString())
-                current = StringBuilder(word)
-            }
-        }
-        if (current.isNotEmpty()) lines.add(current.toString())
-        return lines
-    }
 
     // ============================================================
     // [PERMISSIONS & ACTIVITY RESULT]
