@@ -875,7 +875,86 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
         }
         next()
     }
+private fun showFlashcards() {
+    clearPage("بطاقات SRS 🧠")
+    val allWords = dictionary.keys.toList()
+    val due = allWords.filter { !flashcardStates.containsKey(it) || (flashcardStates[it]?.nextReviewAt ?: 0) <= System.currentTimeMillis() }
+    
+    if (due.isEmpty()) {
+        addCard { 
+            addView(label("✨ لا توجد بطاقات مستحقة الآن!", 18f, colorGold, true))
+            addView(button("🎲 مراجعة عشوائية", true) { startFlashcardSession(allWords.shuffled().take(5)) })
+        }
+        return
+    }
+    
+    addCard {
+        addView(label("📚 لديك ${due.size} كلمة مستحقة للمراجعة", 16f, colorText))
+        addView(button("▶️ ابدأ الآن", true) { startFlashcardSession(due.take(20)) })
+    }
+}
 
+private fun startFlashcardSession(words: List<String>) {
+    if (words.isEmpty()) return
+    var pos = 0
+    var correct = 0
+    
+    fun next() {
+        if (pos >= words.size) {
+            val earned = correct * 10
+            score += earned; saveData(); playSound(2)
+            clearPage("انتهت المراجعة")
+            addCard {
+                addView(label("✅ انتهت المراجعة!", 22f, colorGold, true))
+                addView(label("صحيحة: $correct/${words.size}", 16f))
+                addView(label("+$earned XP", 18f, colorGold, true))
+            }
+            addAction("العودة", true) { showFlashcards() }
+            return
+        }
+        
+        val word = words[pos]
+        val franco = toFranco(word)
+        clearPage("بطاقة ${pos + 1}/${words.size}")
+        
+        // تأثير القلب ثلاثي الأبعاد
+        var isFlipped = false
+        val cardView = card()
+        val qView = label(word, 32f, colorGold, true)
+        qView.gravity = Gravity.CENTER
+        val aView = label(franco, 32f, colorText, true)
+        aView.gravity = Gravity.CENTER
+        aView.visibility = View.GONE
+        
+        cardView.addView(qView)
+        cardView.addView(aView)
+        cardView.setOnClickListener {
+            isFlipped = !isFlipped
+            cardView.animate().rotationY(90f).setDuration(150).withEndAction {
+                qView.visibility = if (isFlipped) View.GONE else View.VISIBLE
+                aView.visibility = if (isFlipped) View.VISIBLE else View.GONE
+                cardView.rotationY = -90f
+                cardView.animate().rotationY(0f).setDuration(150).start()
+            }.start()
+        }
+        page.addView(cardView)
+        
+        addCard {
+            addView(button("✓ تذكرت", true) {
+                val s = flashcardStates[word] ?: FlashcardState(word)
+                val nextInt = if (s.intervalDays == 0) 1 else (s.intervalDays * s.easeFactor).toInt().coerceIn(1, 365)
+                flashcardStates[word] = s.copy(intervalDays = nextInt, nextReviewAt = System.currentTimeMillis() + nextInt * 24L * 3600 * 1000)
+                correct++; pos++; next()
+            })
+            addView(button("✗ نسيت") {
+                val s = flashcardStates[word] ?: FlashcardState(word)
+                flashcardStates[word] = s.copy(intervalDays = 1, nextReviewAt = System.currentTimeMillis() + 24L * 3600 * 1000)
+                pos++; next()
+            })
+        }
+    }
+    next()
+}
     private fun showFoxProfile() {
         clearPage("بروفايل الثعلب 🦊")
         // تصغير حجم الثعلب في البروفايل (150dp)
