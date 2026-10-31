@@ -106,20 +106,34 @@ class TonFoxWidget : AppWidgetProvider() {
 // ============================================================
 // [KEYBOARD SERVICE]
 // ============================================================
+// ============================================================
+// [KEYBOARD SERVICE — Real QWERTY Keyboard]
+// ============================================================
 class FrancoKeyboardService : InputMethodService() {
     private var isFrancoMode = true
-    private val arabicMap = mapOf('ا' to "a", 'أ' to "a", 'إ' to "e", 'آ' to "aa", 'ب' to "b", 'ت' to "t", 'ث' to "th", 'ج' to "j", 'ح' to "7", 'خ' to "kh", 'د' to "d", 'ذ' to "th", 'ر' to "r", 'ز' to "z", 'س' to "s", 'ش' to "sh", 'ص' to "9", 'ض' to "9'", 'ط' to "6", 'ظ' to "6'", 'ع' to "3", 'غ' to "gh", 'ف' to "f", 'ق' to "q", 'ك' to "k", 'ل' to "l", 'م' to "m", 'ن' to "n", 'ه' to "h", 'ة' to "a", 'و' to "w", 'ي' to "y", 'ى' to "a", 'ء' to "2", 'ئ' to "2", 'ؤ' to "2", 'پ' to "p", 'چ' to "ch", 'گ' to "g")
+    
+    // خريطة تحويل الحروف العربية إلى فرانكو
+    private val arabicToFrancoMap = mapOf(
+        'ا' to "a", 'أ' to "a", 'إ' to "e", 'آ' to "aa", 'ب' to "b", 'ت' to "t", 'ث' to "th",
+        'ج' to "j", 'ح' to "7", 'خ' to "kh", 'د' to "d", 'ذ' to "th", 'ر' to "r", 'ز' to "z",
+        'س' to "s", 'ش' to "sh", 'ص' to "9", 'ض' to "9'", 'ط' to "6", 'ظ' to "6'", 'ع' to "3",
+        'غ' to "gh", 'ف' to "f", 'ق' to "q", 'ك' to "k", 'ل' to "l", 'م' to "m", 'ن' to "n",
+        'ه' to "h", 'ة' to "a", 'و' to "w", 'ي' to "y", 'ى' to "a", 'ء' to "2", 'ئ' to "2",
+        'ؤ' to "2", 'پ' to "p", 'چ' to "ch", 'گ' to "g"
+    )
 
     override fun onCreateInputView(): View {
         val root = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            setBackgroundColor(Color.parseColor("#171324"))
-            setPadding(16, 16, 16, 16)
+            setBackgroundColor(Color.parseColor("#0B0914"))
+            setPadding(8, 8, 8, 8)
         }
+
+        // شريط الحالة (زر التبديل)
         val toggleBtn = TextView(this).apply {
             text = "⌨️ TON FOX: Franco Mode ON"
             setTextColor(Color.parseColor("#FFB800"))
-            textSize = 16f
+            textSize = 14f
             gravity = Gravity.CENTER
             setPadding(8, 16, 8, 16)
             setOnClickListener {
@@ -128,45 +142,87 @@ class FrancoKeyboardService : InputMethodService() {
                 setTextColor(if (isFrancoMode) Color.parseColor("#FFB800") else Color.WHITE)
             }
         }
-        val input = EditText(this).apply {
-            hint = "اكتب هنا (سيتم التحويل فوراً)..."
-            setHintTextColor(Color.GRAY)
-            setTextColor(Color.WHITE)
-            textSize = 18f
-            setPadding(16, 16, 16, 16)
-            background = GradientDrawable().apply { setColor(Color.parseColor("#0B0914")); cornerRadius = 24f }
-            addTextChangedListener(object : TextWatcher {
-                var isFormatting = false
-                override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) {}
-                override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {
-                    if (isFormatting || !isFrancoMode) return
-                    isFormatting = true
-                    val text = s.toString()
-                    val franco = text.map { arabicMap[it] ?: it.toString() }.joinToString("")
-                    setText(franco)
-                    setSelection(franco.length)
-                    isFormatting = false
+        root.addView(toggleBtn, LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT))
+
+        // صفوف لوحة المفاتيح (QWERTY)
+        val rows = listOf(
+            listOf("q", "w", "e", "r", "t", "y", "u", "i", "o", "p"),
+            listOf("a", "s", "d", "f", "g", "h", "j", "k", "l"),
+            listOf("⇧", "z", "x", "c", "v", "b", "n", "m", "⌫")
+        )
+
+        for (row in rows) {
+            val rowLayout = LinearLayout(this).apply {
+                orientation = LinearLayout.HORIZONTAL
+                layoutParams = LinearLayout.LayoutParams(MATCH_PARENT, 0, 1f)
+            }
+            for (key in row) {
+                val btn = TextView(this).apply {
+                    text = key
+                    textSize = 18f
+                    setTextColor(Color.WHITE)
+                    gravity = Gravity.CENTER
+                    background = GradientDrawable().apply { setColor(Color.parseColor("#171324")); cornerRadius = 12f }
+                    isClickable = true
+                    layoutParams = LinearLayout.LayoutParams(0, MATCH_PARENT, 1f).apply { setMargins(4, 4, 4, 4) }
+                    setOnClickListener {
+                        handleKeyPress(key)
+                    }
                 }
-                override fun afterTextChanged(s: Editable?) {}
-            })
+                rowLayout.addView(btn)
+            }
+            root.addView(rowLayout)
         }
-        val sendBtn = TextView(this).apply {
-            text = "إرسال ⏎"
-            setTextColor(Color.parseColor("#0B0914"))
-            textSize = 16f
+
+        // الصف السفلي (مسافة وإرسال)
+        val bottomRow = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            layoutParams = LinearLayout.LayoutParams(MATCH_PARENT, 0, 1f)
+        }
+        
+        val spaceBtn = TextView(this).apply {
+            text = "مسافة"
+            textSize = 14f
+            setTextColor(Color.WHITE)
             gravity = Gravity.CENTER
-            background = GradientDrawable().apply { setColor(Color.parseColor("#FFB800")); cornerRadius = 16f }
-            setPadding(8, 16, 8, 16)
-            setOnClickListener {
-                val ic: InputConnection = currentInputConnection ?: return@setOnClickListener
-                ic.commitText(input.text.toString(), 1)
-                input.setText("")
+            background = GradientDrawable().apply { setColor(Color.parseColor("#171324")); cornerRadius = 12f }
+            isClickable = true
+            layoutParams = LinearLayout.LayoutParams(0, MATCH_PARENT, 3f).apply { setMargins(4, 4, 4, 4) }
+            setOnClickListener { currentInputConnection?.commitText(" ", 1) }
+        }
+        
+        val enterBtn = TextView(this).apply {
+            text = "إرسال ⏎"
+            textSize = 14f
+            setTextColor(Color.parseColor("#0B0914"))
+            gravity = Gravity.CENTER
+            background = GradientDrawable().apply { setColor(Color.parseColor("#FFB800")); cornerRadius = 12f }
+            isClickable = true
+            layoutParams = LinearLayout.LayoutParams(0, MATCH_PARENT, 2f).apply { setMargins(4, 4, 4, 4) }
+            setOnClickListener { 
+                val ic = currentInputConnection ?: return@setOnClickListener
+                ic.sendKeyEvent(android.view.KeyEvent(android.view.KeyEvent.ACTION_DOWN, android.view.KeyEvent.KEYCODE_ENTER))
             }
         }
-        root.addView(toggleBtn, LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT).apply { bottomMargin = 8 })
-        root.addView(input, LinearLayout.LayoutParams(MATCH_PARENT, 150))
-        root.addView(sendBtn, LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT).apply { topMargin = 8 })
+        
+        bottomRow.addView(spaceBtn)
+        bottomRow.addView(enterBtn)
+        root.addView(bottomRow)
+
         return root
+    }
+
+    private fun handleKeyPress(key: String) {
+        val ic = currentInputConnection ?: return
+        when (key) {
+            "⌫" -> ic.deleteSurroundingText(1, 0) // مسح حرف
+            "⇧" -> { /* يمكن إضافة منطق Shift هنا */ }
+            else -> {
+                // إذا كان وضع الفرانكو مفعل، ويتم الضغط على حرف عربي (إذا أضفت لوحة عربية لاحقاً)
+                // نتركه يكتب الحرف الإنجليزي كما هو
+                ic.commitText(key, 1)
+            }
+        }
     }
 }
 
@@ -615,7 +671,10 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
         val fox = FoxAvatarView(this)
         fox.level = level
         fox.accessory = currentAccessory
-        page.addView(fox, LinearLayout.LayoutParams(MATCH_PARENT, dp(160)).apply { bottomMargin = dp(10) })
+        page.addView(fox, LinearLayout.LayoutParams(dp(120), dp(120)).apply {
+    gravity = Gravity.CENTER_HORIZONTAL
+    bottomMargin = dp(12)
+})
         
         addCard {
             addView(label("أهلاً بك يا صديقي!", 20f, colorGold, true))
@@ -874,7 +933,10 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
         val fox = FoxAvatarView(this)
         fox.level = level
         fox.accessory = currentAccessory
-        page.addView(fox, LinearLayout.LayoutParams(MATCH_PARENT, dp(200)))
+        page.addView(fox, LinearLayout.LayoutParams(dp(150), dp(150)).apply {
+    gravity = Gravity.CENTER_HORIZONTAL
+    bottomMargin = dp(16)
+})
         
         addCard {
             addView(label("مستوى الثعلب: $level", 20f, colorGold, true))
