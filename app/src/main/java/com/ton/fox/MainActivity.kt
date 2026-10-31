@@ -179,7 +179,7 @@ class FrancoKeyboardService : InputMethodService() {
                 "⌨ TON FOX  |  English"
             }
 
-            textSize = 14f
+            this.textSize = 14f
             typeface = Typeface.DEFAULT_BOLD
             gravity = Gravity.CENTER
             setTextColor(gold)
@@ -1335,8 +1335,8 @@ REQ_PICK_KB_BG -> {
             toast("تعذر حفظ صورة الخلفية")
         }
     }
-}
-
+        }
+    }
 
     override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, grantResults: IntArray) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults)
