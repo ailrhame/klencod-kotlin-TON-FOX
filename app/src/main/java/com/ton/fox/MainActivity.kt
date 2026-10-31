@@ -53,7 +53,7 @@ data class CustomWord(val id: String, val arabic: String, val franco: String, va
 data class FlashcardState(val word: String, val intervalDays: Int = 0, val easeFactor: Float = 2.5f, val nextReviewAt: Long = 0L, val correctCount: Int = 0, val wrongCount: Int = 0)
 
 // ============================================================
-// [KEYBOARD SERVICE — Arabic to Franco Keyboard]
+// [KEYBOARD SERVICE — Customizable Size & Spacing]
 // ============================================================
 class FrancoKeyboardService : InputMethodService() {
     private var isFrancoMode = true 
@@ -95,17 +95,32 @@ class FrancoKeyboardService : InputMethodService() {
             root.setBackgroundColor(Color.parseColor("#0B0914"))
         }
 
+        // تحديد المسافات (Margins & Padding)
+        val kbSpacing = prefs?.getString("kb_spacing", "normal") ?: "normal"
+        val keyMargin = when(kbSpacing) {
+            "tight" -> dp(1)
+            "wide" -> dp(6)
+            else -> dp(3) // normal
+        }
+        val outerPadding = when(kbSpacing) {
+            "tight" -> dp(2)
+            "wide" -> dp(8)
+            else -> dp(4)
+        }
+
         val mainLayout = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            setPadding(dp(4), dp(4), dp(4), dp(4))
+            setPadding(outerPadding, outerPadding, outerPadding, outerPadding)
         }
         root.addView(mainLayout, FrameLayout.LayoutParams(MATCH_PARENT, MATCH_PARENT))
 
+        // تحديد الطول (Height)
         val kbSize = prefs?.getString("kb_size", "large") ?: "large"
         val keyHeight = when(kbSize) {
-            "small" -> dp(50)
-            "medium" -> dp(65)
-            else -> dp(80) 
+            "small" -> dp(45)
+            "medium" -> dp(60)
+            "large" -> dp(75)
+            else -> dp(90) // Extra Large
         }
 
         val kbStyle = prefs?.getString("kb_style", "rounded") ?: "rounded"
@@ -124,39 +139,40 @@ class FrancoKeyboardService : InputMethodService() {
             setTextColor(Color.parseColor("#FFB800"))
             textSize = 14f
             gravity = Gravity.CENTER
-            setPadding(0, dp(8), 0, dp(8))
+            setPadding(0, dp(6), 0, dp(6))
             background = GradientDrawable().apply { setColor(Color.parseColor("#80000000")); cornerRadius = dp(8).toFloat() }
             setOnClickListener {
                 isFrancoMode = !isFrancoMode
                 setInputView(onCreateInputView())
             }
         }
-        mainLayout.addView(header, LinearLayout.LayoutParams(MATCH_PARENT, dp(40)).apply { bottomMargin = dp(4) })
+        mainLayout.addView(header, LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT).apply { bottomMargin = keyMargin })
 
+        // توزيع الحروف بشكل متناسق (11 حرف في الصف الأول والثاني، 12 في الثالث)
         val rows = if (isFrancoMode) {
             listOf(
-                listOf("ض", "ص", "ث", "ق", "ف", "غ", "ع", "ه", "خ", "ح", "ج", "چ"),
-                listOf("ش", "س", "ي", "ب", "ل", "ا", "ت", "ن", "م", "ك", "ط"),
+                listOf("ض", "ص", "ث", "ق", "ف", "غ", "ع", "ه", "خ", "ح", "ج"),
+                listOf("ش", "س", "ي", "ب", "ل", "ا", "ت", "ن", "م", "ك", "ط", "چ"),
                 listOf("⇧", "ئ", "ء", "ؤ", "ر", "لا", "ى", "ة", "و", "ز", "ظ", "⌫")
             )
         } else {
             listOf(
                 listOf("q", "w", "e", "r", "t", "y", "u", "i", "o", "p"),
-                listOf("a", "s", "d", "f", "g", "h", "j", "k", "l"),
-                listOf("⇧", "z", "x", "c", "v", "b", "n", "m", "⌫")
+                listOf("a", "s", "d", "f", "g", "h", "j", "k", "l", "z"),
+                listOf("⇧", "x", "c", "v", "b", "n", "m", "⌫")
             )
         }
 
         for (row in rows) {
             val rowLayout = LinearLayout(this).apply {
                 orientation = LinearLayout.HORIZONTAL
-                layoutParams = LinearLayout.LayoutParams(MATCH_PARENT, keyHeight).apply { bottomMargin = dp(4) }
+                layoutParams = LinearLayout.LayoutParams(MATCH_PARENT, keyHeight).apply { bottomMargin = keyMargin }
             }
             for (key in row) {
                 val isSpecial = key == "⇧" || key == "⌫"
                 val btn = TextView(this).apply {
                     text = key
-                    textSize = if(kbSize == "large") 26f else 20f
+                    textSize = if(kbSize == "xlarge") 30f else if(kbSize == "large") 24f else 20f
                     setTextColor(if (isSpecial) Color.parseColor("#FFB800") else keyTextColor)
                     gravity = Gravity.CENTER
                     background = GradientDrawable().apply { 
@@ -165,7 +181,8 @@ class FrancoKeyboardService : InputMethodService() {
                         setStroke(dp(1), Color.parseColor("#44FFB800"))
                     }
                     isClickable = true
-                    layoutParams = LinearLayout.LayoutParams(0, MATCH_PARENT, 1f).apply { setMargins(dp(2), 0, dp(2), 0) }
+                    // تطبيق المسافات هنا
+                    layoutParams = LinearLayout.LayoutParams(0, MATCH_PARENT, 1f).apply { setMargins(keyMargin, 0, keyMargin, 0) }
                     setOnClickListener { handleKeyPress(key) }
                 }
                 rowLayout.addView(btn)
@@ -185,7 +202,7 @@ class FrancoKeyboardService : InputMethodService() {
             gravity = Gravity.CENTER
             background = GradientDrawable().apply { setColor(keyColor); cornerRadius = keyRadius }
             isClickable = true
-            layoutParams = LinearLayout.LayoutParams(0, MATCH_PARENT, 4f).apply { setMargins(dp(2), 0, dp(2), 0) }
+            layoutParams = LinearLayout.LayoutParams(0, MATCH_PARENT, 4f).apply { setMargins(keyMargin, 0, keyMargin, 0) }
             setOnClickListener { currentInputConnection?.commitText(" ", 1) }
         }
         
@@ -196,7 +213,7 @@ class FrancoKeyboardService : InputMethodService() {
             gravity = Gravity.CENTER
             background = GradientDrawable().apply { setColor(Color.parseColor("#FFB800")); cornerRadius = keyRadius }
             isClickable = true
-            layoutParams = LinearLayout.LayoutParams(0, MATCH_PARENT, 2f).apply { setMargins(dp(2), 0, dp(2), 0) }
+            layoutParams = LinearLayout.LayoutParams(0, MATCH_PARENT, 2f).apply { setMargins(keyMargin, 0, keyMargin, 0) }
             setOnClickListener { 
                 val ic = currentInputConnection ?: return@setOnClickListener
                 ic.sendKeyEvent(android.view.KeyEvent(android.view.KeyEvent.ACTION_DOWN, android.view.KeyEvent.KEYCODE_ENTER))
@@ -1015,100 +1032,110 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
     // [SETTINGS]
     // ============================================================
     private fun showSettings() {
-        clearPage("الإعدادات")
+    clearPage("الإعدادات")
+    
+    // تفعيل الكيبورد
+    addCard {
+        addView(label("⌨️ تفعيل لوحة المفاتيح", 18f, colorGold, true))
+        addView(label("لتفعيل TON FOX ككيبورد افتراضي، اتبع الخطوتين:", 14f, colorMuted))
+        gap(this, 8)
+        addView(button("1️⃣ تفعيل TON FOX في النظام", true) {
+            try {
+                val intent = Intent(android.provider.Settings.ACTION_INPUT_METHOD_SETTINGS)
+                startActivity(intent)
+            } catch (e: Exception) { toast("تعذر فتح الإعدادات") }
+        })
+        addView(button("2️⃣ اختيار TON FOX ككيبورد حالي") {
+            try {
+                val imm = getSystemService(Context.INPUT_METHOD_SERVICE) as InputMethodManager
+                imm.showInputMethodPicker()
+            } catch (e: Exception) { toast("تعذر فتح قائمة الكيبورد") }
+        })
+    }
+
+    // إعدادات الكيبورد
+    addCard {
+        addView(label("🎨 إعدادات مظهر الكيبورد", 18f, colorGold, true))
         
-        // تفعيل الكيبورد
-        addCard {
-            addView(label("⌨️ تفعيل لوحة المفاتيح", 18f, colorGold, true))
-            addView(label("لتفعيل TON FOX ككيبورد افتراضي، اتبع الخطوتين:", 14f, colorMuted))
-            gap(this, 8)
-            addView(button("1️⃣ تفعيل TON FOX في النظام", true) {
-                try {
-                    val intent = Intent(android.provider.Settings.ACTION_INPUT_METHOD_SETTINGS)
-                    startActivity(intent)
-                } catch (e: Exception) {
-                    toast("تعذر فتح الإعدادات")
-                }
-            })
-            addView(button("2️⃣ اختيار TON FOX ككيبورد حالي") {
-                try {
-                    val imm = getSystemService(Context.INPUT_METHOD_SERVICE) as InputMethodManager
-                    imm.showInputMethodPicker()
-                } catch (e: Exception) {
-                    toast("تعذر فتح قائمة الكيبورد")
-                }
-            })
+        // 1. الطول (حجم الأزرار)
+        addView(label("حجم الأزرار (الطول):", 14f, colorMuted))
+        val sizeRow = LinearLayout(this@MainActivity).apply { orientation = LinearLayout.HORIZONTAL; setPadding(0, dp(4), 0, dp(12)) }
+        val currentSize = prefs.getString("kb_size", "large") ?: "large"
+        listOf("small" to "صغير", "medium" to "متوسط", "large" to "كبير", "xlarge" to "ضخم").forEach { (id, name) ->
+            sizeRow.addView(button(if (currentSize == id) "✓ $name" else name) {
+                saveSetting("kb_size", id); toast("تم تغيير حجم الكيبورد")
+            }, LinearLayout.LayoutParams(0, WRAP_CONTENT, 1f).apply { marginEnd = dp(2) })
         }
+        addView(sizeRow)
 
-        // إعدادات الكيبورد
-        addCard {
-            addView(label("🎨 إعدادات مظهر الكيبورد", 18f, colorGold, true))
-            
-            addView(label("حجم الكيبورد:", 14f, colorMuted))
-            val sizeRow = LinearLayout(this@MainActivity).apply { orientation = LinearLayout.HORIZONTAL; setPadding(0, dp(4), 0, dp(12)) }
-            val currentSize = prefs.getString("kb_size", "large") ?: "large"
-            listOf("small" to "صغير", "medium" to "متوسط", "large" to "كبير").forEach { (id, name) ->
-                sizeRow.addView(button(if (currentSize == id) "✓ $name" else name) {
-                    saveSetting("kb_size", id); toast("تم تغيير حجم الكيبورد")
-                }, LinearLayout.LayoutParams(0, WRAP_CONTENT, 1f).apply { marginEnd = dp(4) })
-            }
-            addView(sizeRow)
-
-            addView(label("شكل الأزرار:", 14f, colorMuted))
-            val styleRow = LinearLayout(this@MainActivity).apply { orientation = LinearLayout.HORIZONTAL; setPadding(0, dp(4), 0, dp(12)) }
-            val currentStyle = prefs.getString("kb_style", "rounded") ?: "rounded"
-            listOf("square" to "مربع", "rounded" to "دائري", "capsule" to "كبسولة").forEach { (id, name) ->
-                styleRow.addView(button(if (currentStyle == id) "✓ $name" else name) {
-                    saveSetting("kb_style", id); toast("تم تغيير شكل الكيبورد")
-                }, LinearLayout.LayoutParams(0, WRAP_CONTENT, 1f).apply { marginEnd = dp(4) })
-            }
-            addView(styleRow)
-
-            addView(label("خلفية الكيبورد:", 14f, colorMuted))
-            val bgRow = LinearLayout(this@MainActivity).apply { orientation = LinearLayout.HORIZONTAL; setPadding(0, dp(4), 0, dp(4)) }
-            val currentBg = prefs.getString("kb_bg_type", "dark") ?: "dark"
-            listOf("dark" to "داكن", "light" to "فاتح").forEach { (id, name) ->
-                bgRow.addView(button(if (currentBg == id) "✓ $name" else name) {
-                    saveSetting("kb_bg_type", id); toast("تم تغيير خلفية الكيبورد")
-                }, LinearLayout.LayoutParams(0, WRAP_CONTENT, 1f).apply { marginEnd = dp(4) })
-            }
-            bgRow.addView(button("🖼️ صورة من المعرض", true) {
-                val intent = Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
-                    addCategory(Intent.CATEGORY_OPENABLE)
-                    type = "image/*"
-                }
-                @Suppress("DEPRECATION") startActivityForResult(intent, REQ_PICK_KB_BG)
-            }, LinearLayout.LayoutParams(0, WRAP_CONTENT, 2f))
-            addView(bgRow)
+        // 2. المسافات بين الأزرار
+        addView(label("المسافات بين الأزرار:", 14f, colorMuted))
+        val spacingRow = LinearLayout(this@MainActivity).apply { orientation = LinearLayout.HORIZONTAL; setPadding(0, dp(4), 0, dp(12)) }
+        val currentSpacing = prefs.getString("kb_spacing", "normal") ?: "normal"
+        listOf("tight" to "ضيق", "normal" to "عادي", "wide" to "واسع").forEach { (id, name) ->
+            spacingRow.addView(button(if (currentSpacing == id) "✓ $name" else name) {
+                saveSetting("kb_spacing", id); toast("تم تغيير المسافات")
+            }, LinearLayout.LayoutParams(0, WRAP_CONTENT, 1f).apply { marginEnd = dp(4) })
         }
+        addView(spacingRow)
 
-        addCard {
-            addView(label("🔊 الصوت والنطق", 18f, colorGold, true))
-            val isSpeakOnOpen = prefs.getBoolean("speak_on_open", true)
-            addView(button(if (isSpeakOnOpen) "🔊 نطق كلمة اليوم تلقائياً: مفعل" else "🔇 نطق كلمة اليوم تلقائياً: متوقف") {
-                saveSetting("speak_on_open", !isSpeakOnOpen)
-                showSettings()
-            })
+        // 3. شكل الأزرار
+        addView(label("شكل الأزرار:", 14f, colorMuted))
+        val styleRow = LinearLayout(this@MainActivity).apply { orientation = LinearLayout.HORIZONTAL; setPadding(0, dp(4), 0, dp(12)) }
+        val currentStyle = prefs.getString("kb_style", "rounded") ?: "rounded"
+        listOf("square" to "مربع", "rounded" to "دائري", "capsule" to "كبسولة").forEach { (id, name) ->
+            styleRow.addView(button(if (currentStyle == id) "✓ $name" else name) {
+                saveSetting("kb_style", id); toast("تم تغيير شكل الكيبورد")
+            }, LinearLayout.LayoutParams(0, WRAP_CONTENT, 1f).apply { marginEnd = dp(4) })
         }
+        addView(styleRow)
 
-        addCard {
-            addView(label("🎨 المظهر والثيم", 17f, colorGold, true))
-            listOf("dark_gold" to "داكن ذهبي", "light" to "فاتح", "amoled" to "AMOLED أسود").forEach { (id, name) ->
-                addView(button(if (themeMode == id) "✓ $name" else name) {
-                    themeMode = id; saveSetting("theme_mode", id); applyTheme(); buildShell(); showSettings()
-                })
+        // 4. الخلفية
+        addView(label("خلفية الكيبورد:", 14f, colorMuted))
+        val bgRow = LinearLayout(this@MainActivity).apply { orientation = LinearLayout.HORIZONTAL; setPadding(0, dp(4), 0, dp(4)) }
+        val currentBg = prefs.getString("kb_bg_type", "dark") ?: "dark"
+        listOf("dark" to "داكن", "light" to "فاتح").forEach { (id, name) ->
+            bgRow.addView(button(if (currentBg == id) "✓ $name" else name) {
+                saveSetting("kb_bg_type", id); toast("تم تغيير خلفية الكيبورد")
+            }, LinearLayout.LayoutParams(0, WRAP_CONTENT, 1f).apply { marginEnd = dp(4) })
+        }
+        bgRow.addView(button("🖼️ صورة", true) {
+            val intent = Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
+                addCategory(Intent.CATEGORY_OPENABLE)
+                type = "image/*"
             }
-        }
-        
-        addCard {
-            addView(label("💾 البيانات", 17f, colorGold, true))
-            addView(button("🗑️ حذف جميع البيانات") {
-                AlertDialog.Builder(this@MainActivity).setTitle("تأكيد").setMessage("سيتم مسح كل شيء!").setPositiveButton("حذف") { _, _ ->
-                    prefs.edit().clear().apply(); score = 0; level = 1; streakCount = 0; history.clear(); saveData(); showHome()
-                }.setNegativeButton("إلغاء", null).show()
+            @Suppress("DEPRECATION") startActivityForResult(intent, REQ_PICK_KB_BG)
+        }, LinearLayout.LayoutParams(0, WRAP_CONTENT, 1f))
+        addView(bgRow)
+    }
+
+    addCard {
+        addView(label("🔊 الصوت والنطق", 18f, colorGold, true))
+        val isSpeakOnOpen = prefs.getBoolean("speak_on_open", true)
+        addView(button(if (isSpeakOnOpen) "🔊 نطق كلمة اليوم تلقائياً: مفعل" else "🔇 نطق كلمة اليوم تلقائياً: متوقف") {
+            saveSetting("speak_on_open", !isSpeakOnOpen)
+            showSettings()
+        })
+    }
+
+    addCard {
+        addView(label("🎨 المظهر والثيم", 17f, colorGold, true))
+        listOf("dark_gold" to "داكن ذهبي", "light" to "فاتح", "amoled" to "AMOLED أسود").forEach { (id, name) ->
+            addView(button(if (themeMode == id) "✓ $name" else name) {
+                themeMode = id; saveSetting("theme_mode", id); applyTheme(); buildShell(); showSettings()
             })
         }
     }
+    
+    addCard {
+        addView(label("💾 البيانات", 17f, colorGold, true))
+        addView(button("🗑️ حذف جميع البيانات") {
+            AlertDialog.Builder(this@MainActivity).setTitle("تأكيد").setMessage("سيتم مسح كل شيء!").setPositiveButton("حذف") { _, _ ->
+                prefs.edit().clear().apply(); score = 0; level = 1; streakCount = 0; history.clear(); saveData(); showHome()
+            }.setNegativeButton("إلغاء", null).show()
+        })
+    }
+}
 
     @Deprecated("Deprecated in Java")
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
