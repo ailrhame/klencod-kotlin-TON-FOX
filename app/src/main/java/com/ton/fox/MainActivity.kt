@@ -349,14 +349,15 @@ class MainActivity : Activity() {
             addView(spinner)
         }
         val output = TextView(this).apply {
-            text = "ستظهر الترجمة هنا..."
-            textSize = 18f
-            setTextColor(cream)
-            setPadding(12, 15, 12, 15)
-            background = shape(dark, 12)
-            minHeight = 75
-            textIsSelectable = true
-        }
+    text = "ستظهر الترجمة هنا..."
+    textSize = 18f
+    setTextColor(cream)
+    setPadding(12, 15, 12, 15)
+    background = shape(dark, 12)
+    minHeight = 75
+    setTextIsSelectable(true)
+}
+        
         resultText = output
         addCard {
             addView(label("النتيجة", 15f, gold, true))
