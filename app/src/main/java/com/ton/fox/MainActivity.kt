@@ -66,6 +66,9 @@ class FrancoKeyboardService : InputMethodService() {
     private var isPhoneFieldMode = false
     private var prefs: SharedPreferences? = null
     private var lastCommittedText = ""
+    private val typedArabicPreview = StringBuilder()
+    private var lastArabicPreviewKey = ""
+    private var arabicPreviewView: TextView? = null
 
     private val arabicToFranco = mapOf(
         "ض" to "9'", "ص" to "9", "ث" to "th", "ق" to "q",
@@ -94,6 +97,8 @@ class FrancoKeyboardService : InputMethodService() {
         isNumericFieldMode = isPhoneFieldMode || inputClass == EditorInfo.TYPE_CLASS_NUMBER
         isNumericMode = isNumericFieldMode
         lastCommittedText = ""
+        typedArabicPreview.setLength(0)
+        lastArabicPreviewKey = ""
     }
 
     override fun onStartInputView(info: EditorInfo, restarting: Boolean) {
@@ -151,10 +156,11 @@ class FrancoKeyboardService : InputMethodService() {
         val physicalDpi = metrics.xdpi.takeIf { it in 100f..1000f } ?: (metrics.density * 160f)
         val requestedHeightPx = (heightCm * physicalDpi / 2.54f).toInt()
 
-        // خمس طبقات ثابتة: صف الأرقام + ثلاثة صفوف أحرف + شريط الوظائف.
-        val headerHeight = dp(30)
+        // صف معاينة عربية مستقل أسفل العنوان، ثم الأرقام وثلاثة صفوف أحرف وشريط الوظائف.
+        val headerHeight = dp(26)
+        val previewHeight = if (isNumericMode) 0 else dp(30)
         val rowCount = 5
-        val heightForRows = requestedHeightPx - headerHeight - (outerPadding * 2) - (margin * (rowCount + 1))
+        val heightForRows = requestedHeightPx - headerHeight - previewHeight - (outerPadding * 2) - (margin * (rowCount + 1))
         val keyHeight = (heightForRows / rowCount).coerceIn(dp(25), dp(90))
         val keyHeightDp = keyHeight / metrics.density
         val keyTextSp = (keyHeightDp * 0.49f).coerceIn(12f, 26f)
@@ -201,10 +207,38 @@ class FrancoKeyboardService : InputMethodService() {
                 isFrancoMode = !isFrancoMode
                 isShift = false
                 lastCommittedText = ""
+                typedArabicPreview.setLength(0)
+                lastArabicPreviewKey = ""
                 setInputView(onCreateInputView())
             }
         }
         main.addView(header)
+
+        if (!isNumericMode) {
+            arabicPreviewView = TextView(this).apply {
+                text = if (typedArabicPreview.isEmpty()) "المعاينة العربية ستظهر هنا" else typedArabicPreview.toString()
+                setTextSize(TypedValue.COMPLEX_UNIT_SP, 17f)
+                gravity = Gravity.CENTER
+                textDirection = View.TEXT_DIRECTION_RTL
+                setTextColor(if (isLight) Color.parseColor("#332B45") else Color.parseColor("#FFE2A0"))
+                includeFontPadding = false
+                maxLines = 1
+                isSingleLine = true
+                ellipsize = android.text.TextUtils.TruncateAt.START
+                setPadding(dp(8), 0, dp(8), 0)
+                background = GradientDrawable().apply {
+                    setColor(if (isLight) Color.parseColor("#E8E4EF") else Color.parseColor("#241D32"))
+                    cornerRadius = dp(5).toFloat()
+                    setStroke(dp(1), thinBorder)
+                }
+                layoutParams = LinearLayout.LayoutParams(MATCH_PARENT, previewHeight).apply {
+                    bottomMargin = margin
+                }
+            }
+            main.addView(arabicPreviewView)
+        } else {
+            arabicPreviewView = null
+        }
 
         val arabicRows = listOf(
             listOf("ض", "ص", "ث", "ق", "ف", "غ", "ع", "ه", "خ", "ح", "ج", "د"),
@@ -241,10 +275,14 @@ class FrancoKeyboardService : InputMethodService() {
                 }
                 isClickable = true
                 isFocusable = true
+                isHapticFeedbackEnabled = true
                 layoutParams = LinearLayout.LayoutParams(0, MATCH_PARENT, keyWeight).apply {
                     setMargins(margin, 0, margin, 0)
                 }
-                setOnClickListener { handleKeyPress(key) }
+                setOnClickListener {
+                    performHapticFeedback(android.view.HapticFeedbackConstants.KEYBOARD_TAP)
+                    handleKeyPress(key)
+                }
             }
         }
 
@@ -302,7 +340,11 @@ class FrancoKeyboardService : InputMethodService() {
                 layoutParams = LinearLayout.LayoutParams(0, MATCH_PARENT, weight).apply {
                     setMargins(margin, 0, margin, 0)
                 }
-                setOnClickListener { action() }
+                isHapticFeedbackEnabled = true
+                setOnClickListener {
+                    performHapticFeedback(android.view.HapticFeedbackConstants.KEYBOARD_TAP)
+                    action()
+                }
             }
         }
 
@@ -367,6 +409,19 @@ class FrancoKeyboardService : InputMethodService() {
         val ic = currentInputConnection ?: return
         ic.commitText(value, 1)
         lastCommittedText = value
+        if (value.isBlank()) {
+            typedArabicPreview.setLength(0)
+            lastArabicPreviewKey = ""
+            updateArabicPreview()
+        }
+    }
+
+    private fun updateArabicPreview() {
+        arabicPreviewView?.text = if (typedArabicPreview.isEmpty()) {
+            "المعاينة العربية ستظهر هنا"
+        } else {
+            typedArabicPreview.toString()
+        }
     }
 
     private fun handleKeyPress(key: String) {
@@ -380,6 +435,13 @@ class FrancoKeyboardService : InputMethodService() {
                     ic.deleteSurroundingText(1, 0)
                 }
                 lastCommittedText = ""
+                if (isFrancoMode && lastArabicPreviewKey.isNotEmpty()) {
+                    repeat(lastArabicPreviewKey.length.coerceAtMost(typedArabicPreview.length)) {
+                        typedArabicPreview.deleteCharAt(typedArabicPreview.length - 1)
+                    }
+                    lastArabicPreviewKey = ""
+                    updateArabicPreview()
+                }
             }
             "⇧" -> {
                 isShift = !isShift
@@ -399,6 +461,13 @@ class FrancoKeyboardService : InputMethodService() {
                 } else {
                     if (isShift) key.uppercase(Locale.ROOT) else key
                 }
+                if (isFrancoMode && arabicToFranco.containsKey(key)) {
+                    typedArabicPreview.append(key)
+                    lastArabicPreviewKey = key
+                    updateArabicPreview()
+                } else {
+                    lastArabicPreviewKey = ""
+                }
                 commitKeyboardText(output)
                 if (!isFrancoMode && isShift) {
                     isShift = false
@@ -410,6 +479,121 @@ class FrancoKeyboardService : InputMethodService() {
 
     private fun toastKeyboard(message: String) {
         Toast.makeText(this, message, Toast.LENGTH_SHORT).show()
+    }
+}
+
+// ============================================================
+// [ACCESSIBILITY LENS — Floating on top of the phone's own keyboard]
+// Requires the service declaration and XML config supplied with this source.
+// ============================================================
+class TonFoxLensAccessibilityService : android.accessibilityservice.AccessibilityService() {
+    private var windowManager: WindowManager? = null
+    private var lensButton: TextView? = null
+    private var attached = false
+
+    private fun dp(value: Int): Int = (value * resources.displayMetrics.density).toInt()
+
+    override fun onServiceConnected() {
+        super.onServiceConnected()
+        windowManager = getSystemService(WINDOW_SERVICE) as WindowManager
+        val button = TextView(this).apply {
+            text = "عدسة"
+            textSize = 13f
+            gravity = Gravity.CENTER
+            setTextColor(Color.WHITE)
+            typeface = Typeface.DEFAULT_BOLD
+            background = GradientDrawable().apply {
+                setColor(Color.parseColor("#D91B1726"))
+                cornerRadius = dp(28).toFloat()
+                setStroke(dp(2), Color.parseColor("#FFFFB800"))
+            }
+            elevation = dp(8).toFloat()
+            setOnClickListener { convertFocusedArabicText() }
+        }
+        lensButton = button
+        val params = WindowManager.LayoutParams(
+            dp(58), dp(48),
+            WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY,
+            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
+                WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL or
+                WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN,
+            PixelFormat.TRANSLUCENT
+        ).apply {
+            gravity = Gravity.END or Gravity.CENTER_VERTICAL
+            x = dp(8)
+            y = dp(40)
+        }
+        try {
+            windowManager?.addView(button, params)
+            attached = true
+            button.visibility = View.GONE
+        } catch (_: Exception) {
+            attached = false
+        }
+    }
+
+    override fun onAccessibilityEvent(event: android.view.accessibility.AccessibilityEvent?) {
+        val enabled = getSharedPreferences("ton_fox_data", Context.MODE_PRIVATE)
+            .getBoolean("lens_mode_enabled", false)
+        if (!enabled) {
+            lensButton?.visibility = View.GONE
+            return
+        }
+        val root = rootInActiveWindow
+        val focused = root?.findFocus(android.view.accessibility.AccessibilityNodeInfo.FOCUS_INPUT)
+        val editable = focused?.isEditable == true
+        lensButton?.visibility = if (editable) View.VISIBLE else View.GONE
+    }
+
+    private fun convertFocusedArabicText() {
+        val root = rootInActiveWindow
+        val node = root?.findFocus(android.view.accessibility.AccessibilityNodeInfo.FOCUS_INPUT)
+        if (node == null || !node.isEditable) {
+            Toast.makeText(this, "اضغط أولاً داخل حقل الكتابة", Toast.LENGTH_SHORT).show()
+            return
+        }
+        val original = node.text?.toString().orEmpty()
+        if (original.isBlank()) {
+            Toast.makeText(this, "لا يوجد نص لتحويله", Toast.LENGTH_SHORT).show()
+            return
+        }
+        val converted = TonFoxTransliterator.toFranco(original)
+        if (converted == original) {
+            Toast.makeText(this, "لم أجد حروفاً عربية لتحويلها", Toast.LENGTH_SHORT).show()
+            return
+        }
+        val args = Bundle().apply {
+            putCharSequence(android.view.accessibility.AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE, converted)
+        }
+        val success = node.performAction(android.view.accessibility.AccessibilityNodeInfo.ACTION_SET_TEXT, args)
+        if (!success) Toast.makeText(this, "هذا الحقل لا يسمح بتعديل النص عبر العدسة", Toast.LENGTH_SHORT).show()
+    }
+
+    override fun onInterrupt() = Unit
+
+    override fun onDestroy() {
+        if (attached) {
+            try { windowManager?.removeView(lensButton) } catch (_: Exception) { }
+        }
+        attached = false
+        lensButton = null
+        windowManager = null
+        super.onDestroy()
+    }
+}
+
+private object TonFoxTransliterator {
+    private val map = mapOf(
+        'ض' to "9'", 'ص' to "9", 'ث' to "th", 'ق' to "q", 'ف' to "f", 'غ' to "gh",
+        'ع' to "3", 'ه' to "h", 'خ' to "kh", 'ح' to "7", 'ج' to "j", 'چ' to "ch",
+        'ش' to "sh", 'س' to "s", 'ي' to "y", 'ى' to "a", 'ب' to "b", 'ل' to "l",
+        'ا' to "a", 'أ' to "a", 'إ' to "e", 'آ' to "aa", 'ت' to "t", 'ن' to "n",
+        'م' to "m", 'ك' to "k", 'ط' to "6", 'ئ' to "2", 'ء' to "2", 'ؤ' to "2",
+        'ر' to "r", 'ة' to "a", 'و' to "w", 'ز' to "z", 'ظ' to "6'", 'د' to "d", 'ذ' to "dh"
+    )
+
+    fun toFranco(text: String): String = buildString {
+        text.forEach { ch -> append(map[ch] ?: ch.toString()) }
     }
 }
 
@@ -1334,6 +1518,26 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
             }, LinearLayout.LayoutParams(0, WRAP_CONTENT, 1f).apply { marginEnd = dp(4) })
         }
         addView(styleRow)
+
+        // وضع العدسة: يسمح باستخدام كيبورد الهاتف الأصلي مع زر عائم للتحويل عند الطلب.
+        val lensEnabled = prefs.getBoolean("lens_mode_enabled", false)
+        addView(label("🪄 وضع العدسة العائمة", 15f, colorGold, true))
+        addView(label("يستخدم كيبورد الهاتف الأصلي بدلاً من TON FOX. تظهر عدسة فوق حقل الكتابة؛ اضغطها لتحويل النص العربي المكتوب إلى فرانكو.", 12f, colorMuted))
+        addView(button(if (lensEnabled) "✓ وضع العدسة مفعّل — إعدادات إمكانية الوصول" else "تفعيل وضع العدسة العائمة", true) {
+            val nextEnabled = !prefs.getBoolean("lens_mode_enabled", false)
+            saveSetting("lens_mode_enabled", nextEnabled)
+            if (nextEnabled) {
+                try {
+                    startActivity(Intent(android.provider.Settings.ACTION_ACCESSIBILITY_SETTINGS))
+                    toast("فعّل خدمة TON FOX Lens من إمكانية الوصول، ثم اختر كيبورد الهاتف الأصلي")
+                } catch (_: Exception) {
+                    toast("تعذر فتح إعدادات إمكانية الوصول")
+                }
+            } else {
+                toast("تم إيقاف وضع العدسة")
+            }
+            showSettings()
+        })
 
         addView(label("الأرقام تظهر دائماً فوق الحروف، وحقول الهاتف والرقم تفتح لوحة أرقام تلقائياً.", 12f, colorMuted))
 
