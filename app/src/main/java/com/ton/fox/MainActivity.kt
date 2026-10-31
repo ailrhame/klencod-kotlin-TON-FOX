@@ -9,6 +9,7 @@ import android.content.pm.PackageManager
 import android.content.res.ColorStateList
 import android.content.res.Configuration
 import android.graphics.*
+import android.graphics.drawable.BitmapDrawable
 import android.graphics.drawable.GradientDrawable
 import android.graphics.drawable.RippleDrawable
 import android.inputmethodservice.InputMethodService
@@ -16,10 +17,10 @@ import android.media.AudioManager
 import android.media.ToneGenerator
 import android.net.Uri
 import android.os.*
+import android.provider.MediaStore
 import android.speech.RecognizerIntent
 import android.speech.tts.TextToSpeech
 import android.text.Editable
-import android.text.InputType
 import android.text.TextWatcher
 import android.util.TypedValue
 import android.view.*
@@ -29,6 +30,7 @@ import android.view.inputmethod.InputMethodManager
 import android.widget.*
 import org.json.JSONArray
 import org.json.JSONObject
+import java.io.InputStream
 import java.text.SimpleDateFormat
 import java.util.*
 
@@ -37,6 +39,7 @@ private const val WRAP_CONTENT = ViewGroup.LayoutParams.WRAP_CONTENT
 private const val REQ_VOICE = 9001
 private const val REQ_IMPORT = 9002
 private const val REQ_NOTIFY = 9003
+private const val REQ_PICK_KB_BG = 9006 // Request code for keyboard background image
 private const val CHANNEL_ID_DAILY = "ton_fox_daily_word"
 
 private fun withAlpha(color: Int, alpha: Float): Int {
@@ -48,6 +51,203 @@ data class Lesson(val id: Int, val title: String, val desc: String, val lines: L
 data class UserBadge(val id: String, val title: String, val desc: String, val icon: String)
 data class CustomWord(val id: String, val arabic: String, val franco: String, val tags: String = "")
 data class FlashcardState(val word: String, val intervalDays: Int = 0, val easeFactor: Float = 2.5f, val nextReviewAt: Long = 0L, val correctCount: Int = 0, val wrongCount: Int = 0)
+
+// ============================================================
+// [KEYBOARD SERVICE — Fully Customizable Arabic/English Keyboard]
+// ============================================================
+class FrancoKeyboardService : InputMethodService() {
+    private var isArabic = true
+    private lateinit var prefs: SharedPreferences
+
+    private fun dp(v: Int): Int = (v * resources.displayMetrics.density).toInt()
+
+    override fun onCreateInputView(): View {
+        prefs = getSharedPreferences("ton_fox_data", Context.MODE_PRIVATE)
+        val root = FrameLayout(this)
+
+        // 1. إعداد الخلفية (لون أو صورة)
+        val bgType = prefs.getString("kb_bg_type", "dark") ?: "dark"
+        if (bgType == "image") {
+            val uriString = prefs.getString("kb_bg_uri", null)
+            if (uriString != null) {
+                try {
+                    val uri = Uri.parse(uriString)
+                    val inputStream: InputStream = contentResolver.openInputStream(uri)!!
+                    val bitmap = BitmapFactory.decodeStream(inputStream)
+                    root.background = BitmapDrawable(resources, bitmap)
+                } catch (e: Exception) {
+                    root.setBackgroundColor(Color.parseColor("#0B0914"))
+                }
+            }
+        } else if (bgType == "light") {
+            root.setBackgroundColor(Color.parseColor("#F0F0F0"))
+        } else {
+            root.setBackgroundColor(Color.parseColor("#0B0914"))
+        }
+
+        val mainLayout = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(4), dp(4), dp(4), dp(4))
+        }
+        root.addView(mainLayout, FrameLayout.LayoutParams(MATCH_PARENT, MATCH_PARENT))
+
+        // 2. تحديد حجم الكيبورد (ارتفاع الأزرار)
+        val kbSize = prefs.getString("kb_size", "medium") ?: "medium"
+        val keyHeight = when(kbSize) {
+            "small" -> dp(45)
+            "large" -> dp(75)
+            else -> dp(60) // medium
+        }
+
+        // 3. تحديد شكل الأزرار
+        val kbStyle = prefs.getString("kb_style", "rounded") ?: "rounded"
+        val keyRadius = when(kbStyle) {
+            "square" -> 0f
+            "capsule" -> keyHeight.toFloat() / 2f
+            else -> dp(8).toFloat() // rounded
+        }
+
+        // شريط الحالة العلوي + زر التبديل
+        val header = TextView(this).apply {
+            text = if (isArabic) "⌨️ TON FOX: العربية" else "⌨️ TON FOX: English"
+            setTextColor(Color.parseColor("#FFB800"))
+            textSize = 14f
+            gravity = Gravity.CENTER
+            setPadding(0, dp(8), 0, dp(8))
+            background = GradientDrawable().apply { setColor(Color.parseColor("#80000000")); cornerRadius = dp(8).toFloat() }
+            setOnClickListener {
+                isArabic = !isArabic
+                setInputView(onCreateInputView())
+            }
+        }
+        mainLayout.addView(header, LinearLayout.LayoutParams(MATCH_PARENT, dp(40)).apply { bottomMargin = dp(4) })
+
+        val isLight = bgType == "light"
+        val keyColor = if (isLight) Color.parseColor("#FFFFFF") else Color.parseColor("#171324")
+        val keyTextColor = if (isLight) Color.parseColor("#0B0914") else Color.WHITE
+
+        // بناء الأزرار
+        val rows = if (isArabic) {
+            listOf(
+                listOf("ض", "ص", "ث", "ق", "ف", "غ", "ع", "ه", "خ", "ح", "ج", "چ"),
+                listOf("ش", "س", "ي", "ب", "ل", "ا", "ت", "ن", "م", "ك", "ط"),
+                listOf("⇧", "ئ", "ء", "ؤ", "ر", "لا", "ى", "ة", "و", "ز", "ظ", "⌫")
+            )
+        } else {
+            listOf(
+                listOf("q", "w", "e", "r", "t", "y", "u", "i", "o", "p"),
+                listOf("a", "s", "d", "f", "g", "h", "j", "k", "l"),
+                listOf("⇧", "z", "x", "c", "v", "b", "n", "m", "⌫")
+            )
+        }
+
+        for (row in rows) {
+            val rowLayout = LinearLayout(this).apply {
+                orientation = LinearLayout.HORIZONTAL
+                layoutParams = LinearLayout.LayoutParams(MATCH_PARENT, keyHeight).apply { bottomMargin = dp(4) }
+            }
+            for (key in row) {
+                val isSpecial = key == "⇧" || key == "⌫"
+                val btn = TextView(this).apply {
+                    text = key
+                    textSize = if(kbSize == "large") 24f else 20f
+                    setTextColor(if (isSpecial) Color.parseColor("#FFB800") else keyTextColor)
+                    gravity = Gravity.CENTER
+                    background = GradientDrawable().apply { 
+                        setColor(if (isSpecial) (if (isLight) Color.parseColor("#E0E0E0") else Color.parseColor("#332B45")) else keyColor)
+                        cornerRadius = keyRadius
+                        setStroke(dp(1), Color.parseColor("#44FFB800"))
+                    }
+                    isClickable = true
+                    layoutParams = LinearLayout.LayoutParams(0, MATCH_PARENT, 1f).apply { setMargins(dp(2), 0, dp(2), 0) }
+                    setOnClickListener { handleKeyPress(key) }
+                }
+                rowLayout.addView(btn)
+            }
+            mainLayout.addView(rowLayout)
+        }
+
+        // الصف السفلي
+        val bottomRow = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            layoutParams = LinearLayout.LayoutParams(MATCH_PARENT, keyHeight)
+        }
+        
+        val spaceBtn = TextView(this).apply {
+            text = "مسافة"
+            textSize = 16f
+            setTextColor(keyTextColor)
+            gravity = Gravity.CENTER
+            background = GradientDrawable().apply { setColor(keyColor); cornerRadius = keyRadius }
+            isClickable = true
+            layoutParams = LinearLayout.LayoutParams(0, MATCH_PARENT, 4f).apply { setMargins(dp(2), 0, dp(2), 0) }
+            setOnClickListener { currentInputConnection?.commitText(" ", 1) }
+        }
+        
+        val enterBtn = TextView(this).apply {
+            text = "إرسال ⏎"
+            textSize = 16f
+            setTextColor(Color.parseColor("#0B0914"))
+            gravity = Gravity.CENTER
+            background = GradientDrawable().apply { setColor(Color.parseColor("#FFB800")); cornerRadius = keyRadius }
+            isClickable = true
+            layoutParams = LinearLayout.LayoutParams(0, MATCH_PARENT, 2f).apply { setMargins(dp(2), 0, dp(2), 0) }
+            setOnClickListener { 
+                val ic = currentInputConnection ?: return@setOnClickListener
+                ic.sendKeyEvent(android.view.KeyEvent(android.view.KeyEvent.ACTION_DOWN, android.view.KeyEvent.KEYCODE_ENTER))
+            }
+        }
+        
+        bottomRow.addView(spaceBtn)
+        bottomRow.addView(enterBtn)
+        mainLayout.addView(bottomRow)
+
+        return root
+    }
+
+    private fun handleKeyPress(key: String) {
+        val ic = currentInputConnection ?: return
+        when (key) {
+            "⌫" -> ic.deleteSurroundingText(1, 0)
+            "⇧" -> { /* Shift logic here */ }
+            else -> ic.commitText(key, 1)
+        }
+    }
+}
+
+// ============================================================
+// [CUSTOM VIEW: Fox Avatar]
+// ============================================================
+class FoxAvatarView(context: Context) : View(context) {
+    private val paint = Paint(Paint.ANTI_ALIAS_FLAG)
+    private val textPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { textAlign = Paint.Align.CENTER }
+    var level = 1
+        set(value) { field = value; invalidate() }
+    var accessory = "none"
+        set(value) { field = value; invalidate() }
+
+    override fun onDraw(canvas: Canvas) {
+        super.onDraw(canvas)
+        val w = width.toFloat()
+        val h = height.toFloat()
+        val cx = w / 2
+        val cy = h / 2
+
+        paint.color = Color.parseColor("#332B45")
+        canvas.drawCircle(cx, cy, w * 0.45f, paint)
+
+        val size = w * (0.6f + (level.coerceAtMost(20) * 0.01f))
+        textPaint.textSize = size
+        textPaint.color = Color.WHITE
+        canvas.drawText("🦊", cx, cy + (size / 3), textPaint)
+
+        when (accessory) {
+            "hat" -> { textPaint.textSize = size * 0.4f; canvas.drawText("🎩", cx, cy - (size * 0.4f), textPaint) }
+            "glasses" -> { textPaint.textSize = size * 0.4f; canvas.drawText("🕶️", cx, cy - (size * 0.1f), textPaint) }
+            "crown" -> { textPaint.textSize = size * 0.4f; canvas.drawText("👑", cx, cy - (size * 0.45f), textPaint) }
+        }
+    }
+}
 
 // ============================================================
 // [BACKGROUND WORKERS]
@@ -104,162 +304,6 @@ class TonFoxWidget : AppWidgetProvider() {
 }
 
 // ============================================================
-// [KEYBOARD SERVICE]
-// ============================================================
-// ============================================================
-// [KEYBOARD SERVICE — Real QWERTY Keyboard]
-// ============================================================
-class FrancoKeyboardService : InputMethodService() {
-    
-    private fun dp(v: Int): Int = (v * resources.displayMetrics.density).toInt()
-
-    override fun onCreateInputView(): View {
-        val root = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            setBackgroundColor(Color.parseColor("#0B0914"))
-            setPadding(dp(4), dp(4), dp(4), dp(4))
-            // تحديد ارتفاع مناسب للكيبورد (حوالي 40% من الشاشة)
-            minimumHeight = (resources.displayMetrics.heightPixels * 0.40).toInt()
-        }
-
-        // شريط الحالة العلوي
-        val header = TextView(this).apply {
-            text = "⌨️ TON FOX: لوحة المفاتيح العربية"
-            setTextColor(Color.parseColor("#FFB800"))
-            textSize = 12f
-            gravity = Gravity.CENTER
-            setPadding(0, dp(8), 0, dp(8))
-        }
-        root.addView(header, LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT))
-
-        // صفوف الحروف العربية
-        val rows = listOf(
-            listOf("ض", "ص", "ث", "ق", "ف", "غ", "ع", "ه", "خ", "ح", "ج", "چ"),
-            listOf("ش", "س", "ي", "ب", "ل", "ا", "ت", "ن", "م", "ك", "ط"),
-            listOf("⇧", "ئ", "ء", "ؤ", "ر", "لا", "ى", "ة", "و", "ز", "ظ", "⌫")
-        )
-
-        for (row in rows) {
-            val rowLayout = LinearLayout(this).apply {
-                orientation = LinearLayout.HORIZONTAL
-                layoutParams = LinearLayout.LayoutParams(MATCH_PARENT, 0, 1f)
-            }
-            for (key in row) {
-                val isSpecial = key == "⇧" || key == "⌫"
-                val btn = TextView(this).apply {
-                    text = key
-                    textSize = 20f
-                    setTextColor(if (isSpecial) Color.parseColor("#FFB800") else Color.WHITE)
-                    gravity = Gravity.CENTER
-                    background = GradientDrawable().apply { 
-                        setColor(if (isSpecial) Color.parseColor("#332B45") else Color.parseColor("#171324"))
-                        cornerRadius = dp(8).toFloat() 
-                    }
-                    isClickable = true
-                    // الوزن (weight) يجعل الأزرار تتمدد لتملأ الشاشة
-                    layoutParams = LinearLayout.LayoutParams(0, MATCH_PARENT, 1f).apply { setMargins(dp(2), dp(2), dp(2), dp(2)) }
-                    setOnClickListener { handleKeyPress(key) }
-                }
-                rowLayout.addView(btn)
-            }
-            root.addView(rowLayout)
-        }
-
-        // الصف السفلي (مسافة وإرسال)
-        val bottomRow = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            layoutParams = LinearLayout.LayoutParams(MATCH_PARENT, 0, 1f)
-        }
-        
-        val spaceBtn = TextView(this).apply {
-            text = "مسافة"
-            textSize = 16f
-            setTextColor(Color.WHITE)
-            gravity = Gravity.CENTER
-            background = GradientDrawable().apply { setColor(Color.parseColor("#171324")); cornerRadius = dp(8).toFloat() }
-            isClickable = true
-            layoutParams = LinearLayout.LayoutParams(0, MATCH_PARENT, 4f).apply { setMargins(dp(2), dp(2), dp(2), dp(2)) }
-            setOnClickListener { currentInputConnection?.commitText(" ", 1) }
-        }
-        
-        val enterBtn = TextView(this).apply {
-            text = "إرسال ⏎"
-            textSize = 16f
-            setTextColor(Color.parseColor("#0B0914"))
-            gravity = Gravity.CENTER
-            background = GradientDrawable().apply { setColor(Color.parseColor("#FFB800")); cornerRadius = dp(8).toFloat() }
-            isClickable = true
-            layoutParams = LinearLayout.LayoutParams(0, MATCH_PARENT, 2f).apply { setMargins(dp(2), dp(2), dp(2), dp(2)) }
-            setOnClickListener { 
-                val ic = currentInputConnection ?: return@setOnClickListener
-                ic.sendKeyEvent(android.view.KeyEvent(android.view.KeyEvent.ACTION_DOWN, android.view.KeyEvent.KEYCODE_ENTER))
-            }
-        }
-        
-        bottomRow.addView(spaceBtn)
-        bottomRow.addView(enterBtn)
-        root.addView(bottomRow)
-
-        return root
-    }
-
-    private fun handleKeyPress(key: String) {
-        val ic = currentInputConnection ?: return
-        when (key) {
-            "⌫" -> ic.deleteSurroundingText(1, 0)
-            "⇧" -> { /* زر التحويل (يمكنك إضافة منطق للحروف الكبيرة إذا أردت) */ }
-            else -> ic.commitText(key, 1)
-        }
-    }
-}
-
-// ============================================================
-// [CUSTOM VIEW: Fox Avatar with Animations]
-// ============================================================
-class FoxAvatarView(context: Context) : View(context) {
-    private val paint = Paint(Paint.ANTI_ALIAS_FLAG)
-    private val textPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { textAlign = Paint.Align.CENTER }
-    var level = 1
-        set(value) { field = value; invalidate() }
-    var accessory = "none"
-        set(value) { field = value; invalidate() }
-
-    fun animateCorrect() {
-        animate().rotation(15f).setDuration(100).withEndAction { animate().rotation(-15f).setDuration(100).withEndAction { animate().rotation(0f).setDuration(100).start() }.start() }.start()
-    }
-
-    fun animateWrong() {
-        animate().translationY(20f).setDuration(100).withEndAction { animate().translationY(0f).setDuration(100).start() }.start()
-    }
-
-    fun animateCelebrate() {
-        animate().scaleX(1.5f).scaleY(1.5f).rotation(360f).setDuration(600).withEndAction { animate().scaleX(1f).scaleY(1f).rotation(0f).setDuration(200).start() }.start()
-    }
-
-    override fun onDraw(canvas: Canvas) {
-        super.onDraw(canvas)
-        val w = width.toFloat()
-        val h = height.toFloat()
-        val cx = w / 2
-        val cy = h / 2
-
-        paint.color = Color.parseColor("#332B45")
-        canvas.drawCircle(cx, cy, w * 0.4f, paint)
-
-        val size = w * (0.5f + (level.coerceAtMost(20) * 0.01f))
-        textPaint.textSize = size
-        textPaint.color = Color.WHITE
-        canvas.drawText("🦊", cx, cy + (size / 3), textPaint)
-
-        when (accessory) {
-            "hat" -> { textPaint.textSize = size * 0.4f; canvas.drawText("🎩", cx, cy - (size * 0.4f), textPaint) }
-            "glasses" -> { textPaint.textSize = size * 0.4f; canvas.drawText("🕶️", cx, cy - (size * 0.1f), textPaint) }
-            "crown" -> { textPaint.textSize = size * 0.4f; canvas.drawText("👑", cx, cy - (size * 0.45f), textPaint) }
-        }
-    }
-}
-
-// ============================================================
 // [MAIN ACTIVITY]
 // ============================================================
 class MainActivity : Activity(), TextToSpeech.OnInitListener {
@@ -281,7 +325,6 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
     private var tts: TextToSpeech? = null
     private var ttsReady = false
     private var ttsSpeed = 1.0f
-    private var ttsAutoSpeak = false
     
     private var score = 0
     private var level = 1
@@ -290,20 +333,19 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
     private var streakFreeze = 0
     private var currentAccessory = "none"
     private var currentDialect = "العراقية"
-    private var quizAttempts = 0
-    private var quizCorrect = 0
     
     private val history = mutableListOf<JSONObject>()
-    private val favorites = mutableListOf<JSONObject>()
     private val completed = mutableSetOf<Int>()
     private val unlockedBadges = mutableSetOf<String>()
     private val personalDictionary = mutableListOf<CustomWord>()
     private val flashcardStates = mutableMapOf<String, FlashcardState>()
-    private var recentDictionarySearches = mutableListOf<String>()
+    private var quizAttempts = 0
+    private var quizCorrect = 0
     
     private lateinit var vibrator: Vibrator
     private var toneGen: ToneGenerator? = null
 
+    // Dictionaries
     private val dialectDictIraqi = linkedMapOf("شلونك" to "shlonak", "شكو ماكو" to "shako mako", "هسه" to "hassa", "زين" to "zain", "باچر" to "bachir", "وينك" to "wainak", "أريد" to "areed")
     private val dialectDictEgyptian = linkedMapOf("ازيك" to "ezayak", "عامل ايه" to "3amel eh", "كده" to "kda", "معلش" to "ma3lesh", "يعني" to "ya3ni", "كمان" to "kman", "برضه" to "bardu")
     private val dialectDictGulf = linkedMapOf("شلونك" to "shloonk", "وش أخبارك" to "wesh akhbarak", "زين" to "zain", "باجر" to "bacher", "وناسة" to "wnasa", "قواك الله" to "qwak allah")
@@ -437,8 +479,6 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
 
     private fun toast(s: String) = Toast.makeText(this, s, Toast.LENGTH_SHORT).show()
 
-    private fun hideKeyboard(v: View) { (getSystemService(Context.INPUT_METHOD_SERVICE) as InputMethodManager).hideSoftInputFromWindow(v.windowToken, 0) }
-
     private fun copyText(s: String) {
         if (s.isBlank()) { toast("لا يوجد نص لنسخه"); return }
         (getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager).setPrimaryClip(ClipData.newPlainText("TON FOX", s))
@@ -461,7 +501,6 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
     private fun loadSettings() {
         themeMode = prefs.getString("theme_mode", "dark_gold") ?: "dark_gold"
         ttsSpeed = prefs.getFloat("tts_speed", 1.0f).coerceIn(0.5f, 2.0f)
-        ttsAutoSpeak = prefs.getBoolean("auto_speak", false)
         currentDialect = prefs.getString("dialect", "العراقية") ?: "العراقية"
     }
 
@@ -496,7 +535,7 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
         streakCount = prefs.getInt("streak", 0); lastOpenDate = prefs.getString("last_open", "") ?: ""
         streakFreeze = prefs.getInt("streak_freeze", 0)
         currentAccessory = prefs.getString("accessory", "none") ?: "none"
-        loadArray("history", history); loadArray("favorites", favorites)
+        loadArray("history", history)
         try { val a = JSONArray(prefs.getString("lessons", "[]") ?: "[]"); for (i in 0 until a.length()) completed.add(a.optInt(i)) } catch (_: Exception) {}
         try { val a = JSONArray(prefs.getString("badges", "[]") ?: "[]"); for (i in 0 until a.length()) unlockedBadges.add(a.optString(i)) } catch (_: Exception) {}
         try {
@@ -514,16 +553,14 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
 
     private fun saveData() {
         val h = JSONArray().apply { history.forEach { put(it) } }
-        val f = JSONArray().apply { favorites.forEach { put(it) } }
         val l = JSONArray().apply { completed.forEach { put(it) } }
         val b = JSONArray().apply { unlockedBadges.forEach { put(it) } }
         val pd = JSONArray().apply { personalDictionary.forEach { put(JSONObject().put("id", it.id).put("ar", it.arabic).put("fr", it.franco)) } }
         
         prefs.edit().putInt("score", score).putInt("level", level).putInt("streak", streakCount).putString("last_open", lastOpenDate)
             .putInt("streak_freeze", streakFreeze).putString("accessory", currentAccessory)
-            .putString("history", h.toString()).putString("favorites", f.toString())
-            .putString("lessons", l.toString()).putString("badges", b.toString())
-            .putString("personal_dict", pd.toString()).apply()
+            .putString("history", h.toString()).putString("lessons", l.toString())
+            .putString("badges", b.toString()).putString("personal_dict", pd.toString()).apply()
     }
 
     private fun updateStreakOnOpen() {
@@ -554,9 +591,7 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
 
     private fun toFranco(s: String): String {
         personalDictionary.firstOrNull { it.arabic.trim() == s.trim() }?.let { return it.franco }
-        val dict = when(currentDialect) {
-            "المصرية" -> dialectDictEgyptian; "الخليجية" -> dialectDictGulf; "الشامية" -> dialectDictLevantine; else -> dialectDictIraqi
-        }
+        val dict = when(currentDialect) { "المصرية" -> dialectDictEgyptian; "الخليجية" -> dialectDictGulf; "الشامية" -> dialectDictLevantine; else -> dialectDictIraqi }
         dict[s.trim()]?.let { return it }
         dictionary[s.trim()]?.let { return it }
         return s.map { arabicMap[it] ?: it.toString() }.joinToString("")
@@ -655,13 +690,14 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
     private fun showHome() {
         clearPage("الرئيسية"); page.tag = "home_tag"; val w = todaysWord()
         
+        // تصغير حجم الثعلب في الرئيسية (120dp)
         val fox = FoxAvatarView(this)
         fox.level = level
         fox.accessory = currentAccessory
-        page.addView(fox, LinearLayout.LayoutParams(dp(120), dp(120)).apply {
-    gravity = Gravity.CENTER_HORIZONTAL
-    bottomMargin = dp(12)
-})
+        page.addView(fox, LinearLayout.LayoutParams(dp(120), dp(120)).apply { 
+            gravity = Gravity.CENTER_HORIZONTAL
+            bottomMargin = dp(12) 
+        })
         
         addCard {
             addView(label("أهلاً بك يا صديقي!", 20f, colorGold, true))
@@ -840,90 +876,16 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
         next()
     }
 
-    private fun showFlashcards() {
-        clearPage("بطاقات SRS 🧠")
-        val allWords = dictionary.keys.toList()
-        val due = allWords.filter { !flashcardStates.containsKey(it) || (flashcardStates[it]?.nextReviewAt ?: 0) <= System.currentTimeMillis() }
-        if (due.isEmpty()) {
-            addCard { 
-                addView(label("✨ لا توجد بطاقات مستحقة الآن!", 18f, colorGold, true))
-                addView(button("🎲 مراجعة عشوائية", true) { startFlashcardSession(allWords.shuffled().take(5)) })
-            }
-            return
-        }
-        addCard {
-            addView(label("📚 لديك ${due.size} كلمة مستحقة للمراجعة", 16f, colorText))
-            addView(button("▶️ ابدأ الآن", true) { startFlashcardSession(due.take(20)) })
-        }
-    }
-
-    private fun startFlashcardSession(words: List<String>) {
-        if (words.isEmpty()) return
-        var pos = 0
-        var correct = 0
-        fun next() {
-            if (pos >= words.size) {
-                val earned = correct * 10
-                score += earned; saveData(); playSound(2)
-                clearPage("انتهت المراجعة")
-                addCard {
-                    addView(label("✅ انتهت المراجعة!", 22f, colorGold, true))
-                    addView(label("صحيحة: $correct/${words.size}", 16f))
-                    addView(label("+$earned XP", 18f, colorGold, true))
-                }
-                addAction("العودة", true) { showFlashcards() }
-                return
-            }
-            val word = words[pos]
-            val franco = toFranco(word)
-            clearPage("بطاقة ${pos + 1}/${words.size}")
-            var isFlipped = false
-            val cardView = card()
-            val qView = label(word, 32f, colorGold, true)
-            qView.gravity = Gravity.CENTER
-            val aView = label(franco, 32f, colorText, true)
-            aView.gravity = Gravity.CENTER
-            aView.visibility = View.GONE
-            
-            cardView.addView(qView)
-            cardView.addView(aView)
-            cardView.setOnClickListener {
-                isFlipped = !isFlipped
-                cardView.animate().rotationY(90f).setDuration(150).withEndAction {
-                    qView.visibility = if (isFlipped) View.GONE else View.VISIBLE
-                    aView.visibility = if (isFlipped) View.VISIBLE else View.GONE
-                    cardView.rotationY = -90f
-                    cardView.animate().rotationY(0f).setDuration(150).start()
-                }.start()
-            }
-            page.addView(cardView)
-            
-            addCard {
-                addView(button("✓ تذكرت", true) {
-                    val s = flashcardStates[word] ?: FlashcardState(word)
-                    val nextInt = if (s.intervalDays == 0) 1 else (s.intervalDays * s.easeFactor).toInt().coerceIn(1, 365)
-                    flashcardStates[word] = s.copy(intervalDays = nextInt, nextReviewAt = System.currentTimeMillis() + nextInt * 24L * 3600 * 1000)
-                    correct++; pos++; next()
-                })
-                addView(button("✗ نسيت") {
-                    val s = flashcardStates[word] ?: FlashcardState(word)
-                    flashcardStates[word] = s.copy(intervalDays = 1, nextReviewAt = System.currentTimeMillis() + 24L * 3600 * 1000)
-                    pos++; next()
-                })
-            }
-        }
-        next()
-    }
-
     private fun showFoxProfile() {
         clearPage("بروفايل الثعلب 🦊")
+        // تصغير حجم الثعلب في البروفايل (150dp)
         val fox = FoxAvatarView(this)
         fox.level = level
         fox.accessory = currentAccessory
-        page.addView(fox, LinearLayout.LayoutParams(dp(150), dp(150)).apply {
-    gravity = Gravity.CENTER_HORIZONTAL
-    bottomMargin = dp(16)
-})
+        page.addView(fox, LinearLayout.LayoutParams(dp(150), dp(150)).apply { 
+            gravity = Gravity.CENTER_HORIZONTAL
+            bottomMargin = dp(16) 
+        })
         
         addCard {
             addView(label("مستوى الثعلب: $level", 20f, colorGold, true))
@@ -948,7 +910,7 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
         }
         
         addCard {
-            addView(label("🧊 تجميد السلسلة (Streak Freeze)", 18f, colorGold, true))
+            addView(label("🧊 تجميد السلسلة", 18f, colorGold, true))
             addView(label("يحمي سلسلتك ليوم واحد. (لديك $streakFreeze)", 14f, colorMuted))
             addView(button("شراء تجميد (200 XP)", true) {
                 if (score >= 200) { score -= 200; streakFreeze++; saveData(); playSound(2); showFoxProfile() }
@@ -959,6 +921,52 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
 
     private fun showSettings() {
         clearPage("الإعدادات")
+        
+        // إعدادات الكيبورد
+        addCard {
+            addView(label("⌨️ إعدادات لوحة المفاتيح", 18f, colorGold, true))
+            
+            // الحجم
+            addView(label("حجم الكيبورد:", 14f, colorMuted))
+            val sizeRow = LinearLayout(this@MainActivity).apply { orientation = LinearLayout.HORIZONTAL; setPadding(0, dp(4), 0, dp(12)) }
+            val currentSize = prefs.getString("kb_size", "medium") ?: "medium"
+            listOf("small" to "صغير", "medium" to "متوسط", "large" to "كبير").forEach { (id, name) ->
+                sizeRow.addView(button(if (currentSize == id) "✓ $name" else name) {
+                    saveSetting("kb_size", id); toast("تم تغيير حجم الكيبورد")
+                }, LinearLayout.LayoutParams(0, WRAP_CONTENT, 1f).apply { marginEnd = dp(4) })
+            }
+            addView(sizeRow)
+
+            // الشكل
+            addView(label("شكل الأزرار:", 14f, colorMuted))
+            val styleRow = LinearLayout(this@MainActivity).apply { orientation = LinearLayout.HORIZONTAL; setPadding(0, dp(4), 0, dp(12)) }
+            val currentStyle = prefs.getString("kb_style", "rounded") ?: "rounded"
+            listOf("square" to "مربع", "rounded" to "دائري", "capsule" to "كبسولة").forEach { (id, name) ->
+                styleRow.addView(button(if (currentStyle == id) "✓ $name" else name) {
+                    saveSetting("kb_style", id); toast("تم تغيير شكل الكيبورد")
+                }, LinearLayout.LayoutParams(0, WRAP_CONTENT, 1f).apply { marginEnd = dp(4) })
+            }
+            addView(styleRow)
+
+            // الخلفية
+            addView(label("خلفية الكيبورد:", 14f, colorMuted))
+            val bgRow = LinearLayout(this@MainActivity).apply { orientation = LinearLayout.HORIZONTAL; setPadding(0, dp(4), 0, dp(4)) }
+            val currentBg = prefs.getString("kb_bg_type", "dark") ?: "dark"
+            listOf("dark" to "داكن", "light" to "فاتح").forEach { (id, name) ->
+                bgRow.addView(button(if (currentBg == id) "✓ $name" else name) {
+                    saveSetting("kb_bg_type", id); toast("تم تغيير خلفية الكيبورد")
+                }, LinearLayout.LayoutParams(0, WRAP_CONTENT, 1f).apply { marginEnd = dp(4) })
+            }
+            bgRow.addView(button("🖼️ صورة من المعرض", true) {
+                val intent = Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
+                    addCategory(Intent.CATEGORY_OPENABLE)
+                    type = "image/*"
+                }
+                @Suppress("DEPRECATION") startActivityForResult(intent, REQ_PICK_KB_BG)
+            }, LinearLayout.LayoutParams(0, WRAP_CONTENT, 2f))
+            addView(bgRow)
+        }
+
         addCard {
             addView(label("🎨 المظهر والثيم", 17f, colorGold, true))
             listOf("dark_gold" to "داكن ذهبي", "light" to "فاتح", "amoled" to "AMOLED أسود").forEach { (id, name) ->
@@ -967,17 +975,7 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
                 })
             }
         }
-        addCard {
-            addView(label("🗣️ اللهجة الافتراضية", 17f, colorGold, true))
-            listOf("العراقية", "المصرية", "الخليجية", "الشامية").forEach { d ->
-                addView(button(if (currentDialect == d) "✓ $d" else d) { currentDialect = d; saveSetting("dialect", d); showSettings() })
-            }
-        }
-        addCard {
-            addView(label("⌨️ لوحة المفاتيح", 17f, colorGold, true))
-            addView(label("لتفعيل لوحة TON FOX، اذهب إلى إعدادات النظام > اللغة > لوحة المفاتيح.", 13f, colorMuted))
-            addView(button("فتح الإعدادات") { startActivity(Intent(android.provider.Settings.ACTION_INPUT_METHOD_SETTINGS)) })
-        }
+        
         addCard {
             addView(label("💾 البيانات", 17f, colorGold, true))
             addView(button("🗑️ حذف جميع البيانات") {
@@ -985,6 +983,27 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
                     prefs.edit().clear().apply(); score = 0; level = 1; streakCount = 0; history.clear(); saveData(); showHome()
                 }.setNegativeButton("إلغاء", null).show()
             })
+        }
+    }
+
+    @Deprecated("Deprecated in Java")
+    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
+        super.onActivityResult(requestCode, resultCode, data)
+        if (resultCode != RESULT_OK) return
+        when (requestCode) {
+            REQ_PICK_KB_BG -> {
+                data?.data?.let { uri ->
+                    try {
+                        // نأخذ صلاحية دائمة للصورة
+                        contentResolver.takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                        saveSetting("kb_bg_uri", uri.toString())
+                        saveSetting("kb_bg_type", "image")
+                        toast("✔ تم تعيين صورة الخلفية للكيبورد")
+                    } catch (e: Exception) {
+                        toast("فشل تحميل الصورة")
+                    }
+                }
+            }
         }
     }
 
