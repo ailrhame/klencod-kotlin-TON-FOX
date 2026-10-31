@@ -1643,31 +1643,3 @@ class MainActivity : Activity() {
         private const val REQUEST_IMPORT_BACKUP = 9002
     }
 }
-/*
- * TON FOX V2 — مراجعة نهائية وتعليمات دمج
- *
- * انتهى الهيكل الأساسي في الجزء الرابع.
- * هذا الجزء يحتوي على تعديلات ضرورية قبل البناء.
- *
- * 1) احذف تعريف makeLabel المكرر من الجزء الثالث:
- *    احتفظ بتعريف واحد فقط داخل MainActivity.
- *
- * 2) في showLesson، استبدل:
- *    completedLessons.add(index)
- *    completedLessons.distinct()
- *
- *    بالتالي:
- *    if (!completedLessons.contains(index)) {
- *        completedLessons.add(index)
- *    }
- *
- * 3) في showSaved، لا تستخدم index من قائمة favorites
- *    بعد حذف عنصر من القائمة أثناء إعادة بناء الواجهة.
- *    استخدم نسخة ثابتة من العنصر واحذف العنصر المطابق.
- *
- * 4) تأكد من أن تعريفات Lesson و lessons و dictionary
- *    وحقول واجهة التطبيق الموجودة في الجزء الأول محفوظة
- *    داخل MainActivity.
- *
- * 5) لا تضف هذا التعليق البرمجي كملف مستقل.
- */
