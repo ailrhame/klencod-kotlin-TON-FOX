@@ -72,7 +72,7 @@ class FrancoKeyboardService : InputMethodService() {
         "م" to "m", "ك" to "k", "ط" to "6", "ئ" to "2",
         "ء" to "2", "ؤ" to "2", "ر" to "r", "لا" to "la",
         "ى" to "a", "ة" to "a", "و" to "w", "ز" to "z",
-        "ظ" to "6'"
+        "ظ" to "6'", "د" to "d", "ذ" to "dh"
     )
 
     private fun dp(v: Int): Int =
@@ -206,9 +206,10 @@ class FrancoKeyboardService : InputMethodService() {
             }
         )
 
+        // ترتيب عربي قريب من لوحة مفاتيح الهاتف القياسية، من اليمين إلى اليسار.
         val arabicRows = listOf(
-            listOf("ض", "ص", "ث", "ق", "ف", "غ", "ع", "ه", "خ", "ح", "ج"),
-            listOf("ش", "س", "ي", "ب", "ل", "ا", "ت", "ن", "م", "ك", "ط", "چ"),
+            listOf("ض", "ص", "ث", "ق", "ف", "غ", "ع", "ه", "خ", "ح", "ج", "د"),
+            listOf("ش", "س", "ي", "ب", "ل", "ا", "ت", "ن", "م", "ك", "ط"),
             listOf("⇧", "ئ", "ء", "ؤ", "ر", "لا", "ى", "ة", "و", "ز", "ظ", "⌫")
         )
 
@@ -260,6 +261,12 @@ class FrancoKeyboardService : InputMethodService() {
             val rowLayout = LinearLayout(this).apply {
                 orientation = LinearLayout.HORIZONTAL
                 gravity = Gravity.CENTER
+                // العربية تبدأ من اليمين مثل كيبورد الهاتف، والإنجليزية من اليسار.
+                layoutDirection = if (isFrancoMode) {
+                    View.LAYOUT_DIRECTION_RTL
+                } else {
+                    View.LAYOUT_DIRECTION_LTR
+                }
                 layoutParams = LinearLayout.LayoutParams(
                     MATCH_PARENT,
                     keyHeight
@@ -644,20 +651,23 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
             if (rtl) layoutDirection = View.LAYOUT_DIRECTION_RTL
         }
 
+    // أزرار نصية بسيطة بدون خلفية أو إطار؛ لتجنب قصّ الأزرار أو ظهور نصفها.
     private fun button(t: String, primary: Boolean = false, action: () -> Unit): TextView =
         TextView(this).apply {
-            text = t; textSize = 15f; gravity = Gravity.CENTER
-            setTextColor(if (primary) colorBg else colorGold)
+            text = t
+            textSize = 15f
+            gravity = Gravity.CENTER
+            setTextColor(if (primary) colorGold else colorText)
             typeface = Typeface.DEFAULT_BOLD
-            setPadding(dp(16), dp(12), dp(16), dp(12)); minHeight = dp(54)
-            val bg = shape(if (primary) colorGold else colorPanel, 12, if (primary) null else colorGold)
-            background = RippleDrawable(ColorStateList.valueOf(withAlpha(Color.WHITE, 0.28f)), bg, shape(Color.WHITE, 12))
+            setPadding(dp(10), dp(10), dp(10), dp(10))
+            minHeight = dp(48)
+            background = null
             isClickable = true
+            isFocusable = true
             setOnClickListener {
-                animate().scaleX(0.96f).scaleY(0.96f).setDuration(90).withEndAction {
-                    animate().scaleX(1f).scaleY(1f).setDuration(90).start()
-                    playSound(1); vibrate(15); action()
-                }.start()
+                playSound(1)
+                vibrate(15)
+                action()
             }
         }
 
