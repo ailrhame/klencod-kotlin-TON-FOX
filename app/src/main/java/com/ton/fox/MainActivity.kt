@@ -14,6 +14,8 @@ import android.graphics.*
 import android.graphics.drawable.GradientDrawable
 import android.graphics.drawable.Icon
 import android.graphics.drawable.RippleDrawable
+import android.graphics.pdf.PdfDocument
+import android.hardware.biometrics.BiometricPrompt
 import android.media.AudioManager
 import android.media.ToneGenerator
 import android.net.Uri
@@ -34,7 +36,6 @@ import android.widget.*
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
-import java.io.FileOutputStream
 import java.text.SimpleDateFormat
 import java.util.*
 
@@ -43,7 +44,7 @@ private const val WRAP_CONTENT = ViewGroup.LayoutParams.WRAP_CONTENT
 private const val REQ_VOICE = 9001
 private const val REQ_IMPORT = 9002
 private const val REQ_NOTIFY = 9003
-private const val REQ_CAPTURE_PHOTO = 9005
+private const val REQ_PDF = 9004
 private const val CHANNEL_ID_DAILY = "ton_fox_daily_word"
 
 private fun withAlpha(color: Int, alpha: Float): Int {
@@ -51,36 +52,73 @@ private fun withAlpha(color: Int, alpha: Float): Int {
     return (color and 0x00FFFFFF) or (a shl 24)
 }
 
-data class Lesson(
-    val id: Int, val title: String, val desc: String, val lines: List<String>,
-    val ar: String, val fr: String, val difficulty: String = "beginner"
-)
-
+data class Lesson(val id: Int, val title: String, val desc: String, val lines: List<String>, val ar: String, val fr: String, val difficulty: String)
 data class UserBadge(val id: String, val title: String, val desc: String, val icon: String)
 data class CustomWord(val id: String, val arabic: String, val franco: String, val tags: String = "")
-data class FlashcardState(
-    val word: String, val intervalDays: Int = 0, val easeFactor: Float = 2.5f,
-    val nextReviewAt: Long = 0L, val correctCount: Int = 0, val wrongCount: Int = 0
-)
+data class FlashcardState(val word: String, val intervalDays: Int = 0, val easeFactor: Float = 2.5f, val nextReviewAt: Long = 0L, val correctCount: Int = 0, val wrongCount: Int = 0)
+data class ChatMessage(val text: String, val isUser: Boolean, val timestamp: Long = System.currentTimeMillis())
 
+// ============================================================
+// [رسم شعار الثعلب برمجياً - Canvas View]
+// ============================================================
+class FoxLogoView(context: Context, private val color: Int) : View(context) {
+    private val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        this.color = color
+        style = Paint.Style.FILL_AND_STROKE
+        strokeWidth = 4f
+        strokeJoin = Paint.Join.ROUND
+    }
+    private val path = Path()
+
+    override fun onDraw(canvas: Canvas) {
+        super.onDraw(canvas)
+        val w = width.toFloat()
+        val h = height.toFloat()
+        
+        // رسم الرأس
+        path.reset()
+        path.moveTo(w * 0.5f, h * 0.85f) // الذقن
+        path.lineTo(w * 0.85f, h * 0.45f) // خد أيمن
+        path.lineTo(w * 0.95f, h * 0.1f)  // أذن يمنى
+        path.lineTo(w * 0.6f, h * 0.25f)  // جبهة يمنى
+        path.lineTo(w * 0.4f, h * 0.25f)  // جبهة يسرى
+        path.lineTo(w * 0.05f, h * 0.1f)  // أذن يسرى
+        path.lineTo(w * 0.15f, h * 0.45f) // خد أيسر
+        path.close()
+        canvas.drawPath(path, paint)
+        
+        // عيون
+        paint.color = Color.TRANSPARENT
+        paint.style = Paint.Style.FILL
+        path.reset()
+        path.moveTo(w * 0.3f, h * 0.4f)
+        path.lineTo(w * 0.45f, h * 0.48f)
+        path.lineTo(w * 0.35f, h * 0.52f)
+        path.close()
+        canvas.drawPath(path, paint)
+        
+        path.reset()
+        path.moveTo(w * 0.7f, h * 0.4f)
+        path.lineTo(w * 0.55f, h * 0.48f)
+        path.lineTo(w * 0.65f, h * 0.52f)
+        path.close()
+        canvas.drawPath(path, paint)
+    }
+}
+
+// ============================================================
+// [العمليات الخلفية - الإشعارات والودجت]
+// ============================================================
 object DailyWordScheduler {
     fun schedule(context: Context) {
         val alarm = context.getSystemService(Context.ALARM_SERVICE) as AlarmManager
         val intent = Intent(context, DailyWordReceiver::class.java)
-        val flags = PendingIntent.FLAG_UPDATE_CURRENT or if (Build.VERSION.SDK_INT >= 23) PendingIntent.FLAG_IMMUTABLE else 0
-        val pending = PendingIntent.getBroadcast(context, 441, intent, flags)
+        val pending = PendingIntent.getBroadcast(context, 441, intent, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
         val next = Calendar.getInstance().apply {
-            set(Calendar.HOUR_OF_DAY, 9); set(Calendar.MINUTE, 0)
-            set(Calendar.SECOND, 0); set(Calendar.MILLISECOND, 0)
+            set(Calendar.HOUR_OF_DAY, 9); set(Calendar.MINUTE, 0); set(Calendar.SECOND, 0)
             if (timeInMillis <= System.currentTimeMillis()) add(Calendar.DAY_OF_YEAR, 1)
         }
-        try {
-            if (Build.VERSION.SDK_INT >= 31 && !alarm.canScheduleExactAlarms()) {
-                alarm.setAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, next.timeInMillis, pending)
-            } else {
-                alarm.setExactAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, next.timeInMillis, pending)
-            }
-        } catch (e: Exception) { alarm.set(AlarmManager.RTC_WAKEUP, next.timeInMillis, pending) }
+        try { alarm.setExactAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, next.timeInMillis, pending) } catch (e: Exception) {}
     }
 }
 
@@ -90,29 +128,22 @@ class DailyWordReceiver : BroadcastReceiver() {
         val day = SimpleDateFormat("yyyyMMdd", Locale.US).format(Date()).toInt()
         val w = words[day % words.size]
         val manager = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
-        if (Build.VERSION.SDK_INT >= 26) {
-            manager.createNotificationChannel(NotificationChannel(CHANNEL_ID_DAILY, "TON FOX Word", NotificationManager.IMPORTANCE_DEFAULT))
-        }
-        val open = Intent(context, MainActivity::class.java)
-        val flags = PendingIntent.FLAG_UPDATE_CURRENT or if (Build.VERSION.SDK_INT >= 23) PendingIntent.FLAG_IMMUTABLE else 0
-        val pi = PendingIntent.getActivity(context, 442, open, flags)
+        if (Build.VERSION.SDK_INT >= 26) manager.createNotificationChannel(NotificationChannel(CHANNEL_ID_DAILY, "TON FOX", NotificationManager.IMPORTANCE_DEFAULT))
+        val pi = PendingIntent.getActivity(context, 442, Intent(context, MainActivity::class.java), PendingIntent.FLAG_IMMUTABLE)
         val builder = if (Build.VERSION.SDK_INT >= 26) Notification.Builder(context, CHANNEL_ID_DAILY) else Notification.Builder(context)
         val notification = builder.setSmallIcon(android.R.drawable.ic_btn_speak_now)
             .setContentTitle("TON FOX 🦊 · كلمة اليوم")
             .setContentText("${w.first} • ${w.second}")
+            .setStyle(Notification.BigTextStyle().bigText("${w.first}\n${w.second}\nافتح التطبيق لسماع النطق"))
             .setContentIntent(pi).setAutoCancel(true).build()
-        if (Build.VERSION.SDK_INT < 33 || context.checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED) {
-            manager.notify(440, notification)
-        }
+        if (Build.VERSION.SDK_INT < 33 || context.checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED) manager.notify(440, notification)
         DailyWordScheduler.schedule(context)
     }
 }
 
 class DailyWordBootReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent?) {
-        if (intent?.action == Intent.ACTION_BOOT_COMPLETED || intent?.action == Intent.ACTION_MY_PACKAGE_REPLACED) {
-            DailyWordScheduler.schedule(context)
-        }
+        if (intent?.action == Intent.ACTION_BOOT_COMPLETED) DailyWordScheduler.schedule(context)
     }
 }
 
@@ -123,23 +154,20 @@ class TonFoxWidget : AppWidgetProvider() {
             val prefs = context.getSharedPreferences("ton_fox_data", Context.MODE_PRIVATE)
             views.setTextViewText(android.R.id.text1, prefs.getString("widget_today", "افتح التطبيق") ?: "")
             views.setTextViewText(android.R.id.text2, prefs.getString("widget_today_fr", "") ?: "")
-            val open = PendingIntent.getActivity(context, 0, Intent(context, MainActivity::class.java), PendingIntent.FLAG_IMMUTABLE)
-            views.setOnClickPendingIntent(android.R.id.text1, open)
             manager.updateAppWidget(id, views)
         }
     }
 }
-
+// ============================================================
+// [MainActivity]
+// ============================================================
 class MainActivity : Activity(), TextToSpeech.OnInitListener {
-    private var colorBg = Color.parseColor("#0B0914")
-    private var colorPanel = Color.parseColor("#171324")
-    private var colorGold = Color.parseColor("#FFB800")
-    private var colorGoldLight = Color.parseColor("#F3D98B")
+    private var colorBg = Color.parseColor("#090D14")
+    private var colorPanel = Color.parseColor("#171F2B")
+    private var colorGold = Color.parseColor("#D9B33E")
     private var colorText = Color.parseColor("#F5F5F5")
-    private var colorMuted = Color.parseColor("#8A8F9C")
-    private var colorBorder = Color.parseColor("#332B45")
-    private var isDarkTheme = true
-    private var accentMode = "gold"
+    private var colorMuted = Color.parseColor("#929BAA")
+    private var colorBorder = Color.parseColor("#2A3241")
 
     private lateinit var prefs: SharedPreferences
     private lateinit var root: FrameLayout
@@ -158,8 +186,10 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
     private var streakCount = 0
     private var lastOpenDate = ""
     private var soundEnabled = true
-    private var fontChoice = "default"
+    private var isAppLockEnabled = false
+    private var isAppLocked = false
 
+    // Lists & States
     private val history = mutableListOf<JSONObject>()
     private val favorites = mutableListOf<JSONObject>()
     private val completed = mutableSetOf<Int>()
@@ -171,35 +201,43 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
     private var pointsToday = 0
     private var quizAttempts = 0
     private var quizCorrect = 0
+    private var focusMode = false
+    private var chatHistory = mutableListOf<ChatMessage>()
 
     private lateinit var vibrator: Vibrator
     private var toneGen: ToneGenerator? = null
-    private var pendingOcrResult: String? = null
 
+    // Dictionaries & Data
     private val dialectDictIraqi = linkedMapOf("شلونك" to "shlonak", "شكو ماكو" to "shako mako", "هسه" to "hassa", "زين" to "zain", "باچر" to "bachir", "وينك" to "wainak", "أريد" to "areed")
     private val dialectDictEgyptian = linkedMapOf("ازيك" to "ezayak", "عامل ايه" to "3amel eh", "كده" to "kda", "معلش" to "ma3lesh", "يعني" to "ya3ni", "كمان" to "kman", "برضه" to "bardu")
     private val dialectDictGulf = linkedMapOf("شلونك" to "shloonk", "وش أخبارك" to "wesh akhbarak", "زين" to "zain", "باجر" to "bacher", "وناسة" to "wnasa", "قواك الله" to "qwak allah")
     private val dialectDictLevantine = linkedMapOf("كيفك" to "keefak", "شو الأخبار" to "shu lakhbar", "منيح" to "mnee7", "هلأ" to "halla2", "بكرا" to "bukra", "شغل" to "shughul")
 
-    private val dailyWords = listOf("صباح الخير" to "saba7 elkhair", "شلونك" to "shlonak", "حبيبي" to "7abibi", "شكراً" to "shukran", "اشتقتلك" to "eshta2tellak", "تمام" to "tamam", "وينك" to "wainak", "الله يسعدك" to "allah yesa3dak", "أريد أتعلم" to "areed at3allam", "نلتقي قريباً" to "neltagi gareeban", "كل شيء بخير" to "kol shay bekhair", "تصبح على خير" to "tesba7 3ala khair", "ماكو مشكلة" to "mako moshkela")
-
     private val dictionary = linkedMapOf(
         "مرحبا" to "mar7aba", "السلام عليكم" to "alsalam 3alaykom", "كيف حالك" to "keef 7alak", "شلونك" to "shlonak", "شلونج" to "shlonich", "شلونكم" to "shlonkom", "شكو ماكو" to "shako mako", "شنو" to "shno", "ليش" to "leesh", "وين" to "wain", "هسه" to "hassa", "باچر" to "bachir", "زين" to "zain", "حبيبي" to "7abibi", "حبيبتي" to "7abibti", "قلبي" to "galbi", "عمري" to "3omri", "أحبك" to "a7ebak", "اشتقتلك" to "eshta2tellak", "شكرا" to "shukran", "عفوا" to "3afwan", "نعم" to "na3am", "لا" to "la", "اي" to "ay", "مو" to "mo", "ماكو" to "mako", "اكو" to "ako", "الله" to "allah", "ان شاء الله" to "inshallah", "الحمد لله" to "al7amdulillah", "ما شاء الله" to "mashallah", "صباح الخير" to "saba7 elkhair", "مساء الخير" to "masa elkhair", "أنا" to "ana", "أنت" to "enta", "بيت" to "bait", "كتاب" to "ketab", "مدرسة" to "madrasa", "جامعة" to "game3a", "صديق" to "sadeeq", "جميل" to "jameel", "حلو" to "7elo", "كبير" to "kbeer", "صغير" to "s8eer", "اليوم" to "elyom", "غدا" to "8adan", "الآن" to "alan", "أريد" to "areed", "تعال" to "ta3al", "روح" to "roo7", "يلا" to "yalla", "خلاص" to "khalas", "تمام" to "tamam", "مبروك" to "mabrook", "مشكلة" to "moshkela", "وقت" to "wa2t", "شمس" to "shams", "قمر" to "qamar", "نور" to "noor", "عراق" to "iraq", "مصر" to "masr", "السعودية" to "alsa3odeya"
     )
-
     private val arabicMap = mapOf('ا' to "a", 'أ' to "a", 'إ' to "e", 'آ' to "aa", 'ب' to "b", 'ت' to "t", 'ث' to "th", 'ج' to "j", 'ح' to "7", 'خ' to "kh", 'د' to "d", 'ذ' to "th", 'ر' to "r", 'ز' to "z", 'س' to "s", 'ش' to "sh", 'ص' to "9", 'ض' to "9'", 'ط' to "6", 'ظ' to "6'", 'ع' to "3", 'غ' to "gh", 'ف' to "f", 'ق' to "q", 'ك' to "k", 'ل' to "l", 'م' to "m", 'ن' to "n", 'ه' to "h", 'ة' to "a", 'و' to "w", 'ي' to "y", 'ى' to "a", 'ء' to "2", 'ئ' to "2", 'ؤ' to "2", 'پ' to "p", 'چ' to "ch", 'گ' to "g")
-
+    private val dailyWords = listOf("صباح الخير" to "saba7 elkhair", "شلونك" to "shlonak", "حبيبي" to "7abibi", "شكراً" to "shukran", "اشتقتلك" to "eshta2tellak", "تمام" to "tamam", "وينك" to "wainak", "الله يسعدك" to "allah yesa3dak", "أريد أتعلم" to "areed at3allam", "نلتقي قريباً" to "neltagi gareeban", "كل شيء بخير" to "kol shay bekhair", "تصبح على خير" to "tesba7 3ala khair", "ماكو مشكلة" to "mako moshkela")
+    
     private val badgeDefinitions = listOf(
-        UserBadge("first", "أول ترجمة", "قم بأول ترجمة", "🎯"), UserBadge("ten", "10 ترجمات", "قم بـ10 ترجمات", "🔟"),
-        UserBadge("hundred", "100 ترجمة", "قم بـ100 ترجمة", "💯"), UserBadge("save10", "حافظ الكلمات", "احفظ 10 عبارات", "💾"),
-        UserBadge("five_lessons", "تلميذ مجتهد", "أكمل 5 دروس", "🎓"), UserBadge("streak7", "أسبوع متواصل", "7 أيام متتالية", "🔥"),
-        UserBadge("streak30", "شهر ملكي", "30 يوماً متتالياً", "🏆"), UserBadge("first_quiz", "أول اختبار", "أتم أول اختبار", "🧪"),
-        UserBadge("perfect_quiz", "علامة كاملة", "اختبار بعلامة كاملة", "⭐"), UserBadge("share", "ناشر", "شارك ترجمة كصورة", "📤")
+        UserBadge("first", "أول ترجمة", "قم بأول ترجمة", "🎯"), UserBadge("ten", "10 ترجمات", "قم بـ10 ترجمات", "🔟"), UserBadge("hundred", "100 ترجمة", "قم بـ100 ترجمة", "💯"),
+        UserBadge("save10", "حافظ الكلمات", "احفظ 10 عبارات", "💾"), UserBadge("five_lessons", "تلميذ مجتهد", "أكمل 5 دروس", "🎓"),
+        UserBadge("streak7", "أسبوع متواصل", "7 أيام متتالية", "🔥"), UserBadge("streak30", "شهر ملكي", "30 يوماً متتالياً", "🏆"),
+        UserBadge("first_quiz", "أول اختبار", "أتم أول اختبار", "🧪"), UserBadge("perfect_quiz", "علامة كاملة", "اختبار بعلامة كاملة", "⭐"), UserBadge("share", "ناشر", "شارك ترجمة كصورة", "📤")
+    )
+    
+    private val lessons = listOf(
+        Lesson(0, "مقدمة في الفرانكو", "تعرف على طريقة كتابة العربية.", listOf("الفرانكو أسلوب غير رسمي.", "تختلف كتابة الكلمات.", "السياق يساعد على الفهم."), "مرحبا", "mar7aba", "beginner"),
+        Lesson(1, "الحروف الأساسية", "تعلم أشهر المقابلات.", listOf("ب = b", "ت = t", "ش = sh", "خ = kh", "ح = 7"), "كتاب", "ketab", "beginner"),
+        Lesson(2, "الأرقام", "الأرقام تمثل أصواتاً.", listOf("2 = ء", "3 = ع", "5 = خ", "6 = ط", "7 = ح", "8 = غ", "9 = ص"), "حبيبي", "7abibi", "beginner"),
+        Lesson(3, "تكوين الكلمات", "اجمع الحروف.", listOf("اكتب الكلمة كما تنطقها.", "حافظ على نمط ثابت.", "لا توجد كتابة موحدة."), "شكرا", "shukran", "intermediate"),
+        Lesson(4, "المحادثات", "تدرب على العبارات.", listOf("استخدم المسافات.", "اقرأ الجملة كاملة.", "اختصر باعتدال."), "كيف حالك", "keef 7alak", "intermediate"),
+        Lesson(5, "اللهجة العراقية", "مفردات عراقية.", listOf("شلونك = shlonak", "شكو ماكو = shako mako", "هسه = hassa", "زين = zain"), "شلونك", "shlonak", "intermediate"),
+        Lesson(6, "الاحتراف", "حسّن وضوح كتابتك.", listOf("اختر طريقة ثابتة.", "راجع الكلمات الملتبسة.", "لا تعتمد على الحرفي."), "اشتقتلك", "eshta2tellak", "advanced")
     )
 
     override fun attachBaseContext(newBase: Context) {
-        val config = Configuration(newBase.resources.configuration)
-        config.fontScale = 1.0f
+        val config = Configuration(newBase.resources.configuration); config.fontScale = 1.0f
         super.attachBaseContext(newBase.createConfigurationContext(config))
     }
 
@@ -208,15 +246,15 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
         vibrator = if (Build.VERSION.SDK_INT >= 31) (getSystemService(Context.VIBRATOR_MANAGER_SERVICE) as VibratorManager).defaultVibrator else @Suppress("DEPRECATION") getSystemService(Context.VIBRATOR_SERVICE) as Vibrator
         try { toneGen = ToneGenerator(AudioManager.STREAM_MUSIC, 50) } catch (_: Exception) {}
         prefs = getSharedPreferences("ton_fox_data", MODE_PRIVATE)
-        loadSettings(); applyTheme(); loadData()
+        loadData()
+        isAppLockEnabled = prefs.getBoolean("app_lock", false)
+        if (isAppLockEnabled) { isAppLocked = true; showLockScreen() } else { initApp() }
+    }
+
+    private fun initApp() {
         tts = TextToSpeech(this, this)
-        createNotificationChannels()
-        if (Build.VERSION.SDK_INT >= 33 && checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
-            requestPermissions(arrayOf(Manifest.permission.POST_NOTIFICATIONS), REQ_NOTIFY)
-        }
+        if (Build.VERSION.SDK_INT >= 33 && checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) requestPermissions(arrayOf(Manifest.permission.POST_NOTIFICATIONS), REQ_NOTIFY)
         DailyWordScheduler.schedule(this)
-        registerShortcuts()
-        updateWidgetData()
         updateStreakOnOpen()
         buildShell()
         showHome()
@@ -224,11 +262,8 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
 
     override fun onInit(status: Int) {
         if (status == TextToSpeech.SUCCESS) {
-            ttsReady = true
-            tts?.setSpeechRate(ttsSpeed)
-            if (prefs.getBoolean("speak_on_open", true)) root.postDelayed({ speakDailyWord() }, 1000)
-        } else {
-            ttsReady = false
+            ttsReady = true; tts?.setSpeechRate(ttsSpeed)
+            if (prefs.getBoolean("speak_on_open", true) && !isAppLocked) root.postDelayed({ speakDailyWord() }, 1000)
         }
     }
 
@@ -240,253 +275,56 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
         else super.onBackPressed()
     }
 
+    // --- Helpers ---
     private fun dp(v: Int) = (v * resources.displayMetrics.density).toInt()
-
-    private fun vibrate(ms: Long) {
-        try { if (Build.VERSION.SDK_INT >= 26) vibrator.vibrate(VibrationEffect.createOneShot(ms, VibrationEffect.DEFAULT_AMPLITUDE)) else @Suppress("DEPRECATION") vibrator.vibrate(ms) } catch (_: Exception) {}
+    private fun vibrate(ms: Long) { try { vibrator.vibrate(VibrationEffect.createOneShot(ms, VibrationEffect.DEFAULT_AMPLITUDE)) } catch (_: Exception) {} }
+    private fun playSound(type: Int) { if (!soundEnabled || toneGen == null) return; try { toneGen?.startTone(if (type == 1) ToneGenerator.TONE_PROP_BEEP else if (type == 2) ToneGenerator.TONE_CDMA_ALERT_CALL_GUARD else ToneGenerator.TONE_PROP_NACK, 50) } catch (_: Exception) {} }
+    private fun shape(color: Int, radius: Int, stroke: Int? = null): GradientDrawable = GradientDrawable().apply { setColor(color); cornerRadius = dp(radius).toFloat(); if (stroke != null) setStroke(dp(1), stroke) }
+    private fun label(t: String, size: Float = 15f, color: Int = colorText, bold: Boolean = false): TextView = TextView(this).apply { text = t; textSize = size; setTextColor(color); if (bold) typeface = Typeface.DEFAULT_BOLD; setPadding(dp(4), dp(6), dp(4), dp(6)); layoutDirection = View.LAYOUT_DIRECTION_RTL }
+    
+    private fun button(t: String, primary: Boolean = false, action: () -> Unit): TextView = TextView(this).apply {
+        text = t; textSize = 15f; gravity = Gravity.CENTER; setTextColor(if (primary) colorBg else colorGold); typeface = Typeface.DEFAULT_BOLD
+        setPadding(dp(16), dp(12), dp(16), dp(12)); minHeight = dp(54)
+        background = RippleDrawable(ColorStateList.valueOf(withAlpha(Color.WHITE, 0.2f)), shape(if (primary) colorGold else colorPanel, 12, if (primary) null else colorGold), shape(Color.WHITE, 12))
+        isClickable = true
+        setOnClickListener { animate().scaleX(0.96f).scaleY(0.96f).setDuration(90).withEndAction { animate().scaleX(1f).scaleY(1f).setDuration(90).start(); playSound(1); vibrate(15); action() }.start() }
     }
-
-    private fun playSound(type: Int) {
-        if (!soundEnabled || toneGen == null) return
-        try {
-            when (type) {
-                1 -> toneGen?.startTone(ToneGenerator.TONE_PROP_BEEP, 50)
-                2 -> toneGen?.startTone(ToneGenerator.TONE_CDMA_ALERT_CALL_GUARD, 100)
-                3 -> toneGen?.startTone(ToneGenerator.TONE_PROP_NACK, 100)
-            }
-        } catch (_: Exception) {}
-    }
-
-    private fun shape(color: Int, radius: Int, stroke: Int? = null): GradientDrawable =
-        GradientDrawable().apply {
-            setColor(color); cornerRadius = dp(radius).toFloat()
-            if (stroke != null) setStroke(dp(1), stroke)
-        }
-
-    private fun label(t: String, size: Float = 15f, color: Int = colorText, bold: Boolean = false, rtl: Boolean = true): TextView =
-        TextView(this).apply {
-            text = t; textSize = size; setTextColor(color)
-            if (bold) typeface = Typeface.DEFAULT_BOLD
-            if (fontChoice == "serif") typeface = Typeface.SERIF
-            setPadding(dp(4), dp(6), dp(4), dp(6))
-            if (rtl) layoutDirection = View.LAYOUT_DIRECTION_RTL
-        }
-
-    private fun button(t: String, primary: Boolean = false, action: () -> Unit): TextView =
-        TextView(this).apply {
-            text = t; textSize = 15f; gravity = Gravity.CENTER
-            setTextColor(if (primary) colorBg else colorGold)
-            typeface = Typeface.DEFAULT_BOLD
-            setPadding(dp(16), dp(12), dp(16), dp(12)); minHeight = dp(54)
-            val bg = shape(if (primary) colorGold else colorPanel, 12, if (primary) null else colorGold)
-            background = RippleDrawable(ColorStateList.valueOf(withAlpha(Color.WHITE, 0.28f)), bg, shape(Color.WHITE, 12))
-            isClickable = true
-            setOnClickListener {
-                animate().scaleX(0.96f).scaleY(0.96f).setDuration(90).withEndAction {
-                    animate().scaleX(1f).scaleY(1f).setDuration(90).start()
-                    playSound(1); vibrate(15); action()
-                }.start()
-            }
-        }
-
-    private fun card(): LinearLayout = LinearLayout(this).apply {
-        orientation = LinearLayout.VERTICAL; setPadding(dp(20), dp(18), dp(20), dp(18))
-        background = shape(colorPanel, 16, colorBorder); elevation = dp(4).toFloat()
-    }
-
+    
+    private fun card(): LinearLayout = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(20), dp(18), dp(20), dp(18)); background = shape(colorPanel, 16, colorBorder); elevation = dp(4).toFloat() }
     private fun gap(parent: LinearLayout, h: Int = 12) { parent.addView(View(this), LinearLayout.LayoutParams(1, dp(h))) }
-
-    private fun addCard(block: LinearLayout.() -> Unit) {
-        val c = card(); c.block()
-        page.addView(c, LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT).apply { bottomMargin = dp(14) })
-    }
-
-    private fun addAction(t: String, primary: Boolean = false, action: () -> Unit) {
-        page.addView(button(t, primary, action), LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT).apply { bottomMargin = dp(10) })
-    }
-
+    private fun addCard(block: LinearLayout.() -> Unit) { val c = card(); c.block(); c.alpha = 0f; c.translationY = 50f; page.addView(c, LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT).apply { bottomMargin = dp(14) }); c.animate().alpha(1f).translationY(0f).setDuration(300).start() }
+    private fun addAction(t: String, primary: Boolean = false, action: () -> Unit) { page.addView(button(t, primary, action), LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT).apply { bottomMargin = dp(10) }) }
     private fun toast(s: String) = Toast.makeText(this, s, Toast.LENGTH_SHORT).show()
-
     private fun hideKeyboard(v: View) { (getSystemService(Context.INPUT_METHOD_SERVICE) as InputMethodManager).hideSoftInputFromWindow(v.windowToken, 0) }
+    private fun copyText(s: String) { if (s.isBlank()) { toast("لا يوجد نص"); return }; (getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager).setPrimaryClip(ClipData.newPlainText("TON FOX", s)); toast("تم النسخ") }
+    private fun todaysWord(): Pair<String, String> { val n = SimpleDateFormat("yyyyMMdd", Locale.US).format(Date()).toInt(); return dailyWords[n % dailyWords.size] }
+    
+    private fun speakDailyWord() {
+        if (!ttsReady) return; val w = todaysWord(); val result = tts?.setLanguage(Locale("ar"))
+        if (result == TextToSpeech.LANG_MISSING_DATA || result == TextToSpeech.LANG_NOT_SUPPORTED) { tts?.language = Locale.US; tts?.speak(w.second, TextToSpeech.QUEUE_FLUSH, null, "d_en") }
+        else { tts?.speak(w.first, TextToSpeech.QUEUE_FLUSH, null, "d_ar"); Handler(Looper.getMainLooper()).postDelayed({ tts?.language = Locale.US; tts?.speak(w.second, TextToSpeech.QUEUE_ADD, null, "d_fr") }, 1200) }
+    }
+    private fun speak(s: String) { if (!ttsReady || s.isBlank()) return; tts?.language = Locale.US; tts?.setSpeechRate(ttsSpeed); tts?.speak(s, TextToSpeech.QUEUE_FLUSH, null, "sp") }
 
-    private fun copyText(s: String) {
-        if (s.isBlank()) { toast("لا يوجد نص لنسخه"); return }
-        (getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager).setPrimaryClip(ClipData.newPlainText("TON FOX", s))
-        toast("تم النسخ")
+    private fun showLockScreen() {
+        root = FrameLayout(this).apply { setBackgroundColor(colorBg) }
+        val layout = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; gravity = Gravity.CENTER; setPadding(dp(32), dp(32), dp(32), dp(32)) }
+        layout.addView(FoxLogoView(this, colorGold), LinearLayout.LayoutParams(dp(120), dp(120)))
+        gap(layout, 20); layout.addView(label("TON FOX مقفل", 24f, colorText, true)); layout.addView(label("يرجى التحقق من هويتك", 14f, colorMuted))
+        gap(layout, 40); layout.addView(button("🔓 فتح ببصمة الإصبع", true) { authenticateUser() })
+        root.addView(layout, FrameLayout.LayoutParams(MATCH_PARENT, MATCH_PARENT)); setContentView(root); authenticateUser()
     }
 
-    private fun shareText(s: String) {
-        if (s.isBlank()) { toast("لا يوجد نص للمشاركة"); return }
-        val i = Intent(Intent.ACTION_SEND).apply { type = "text/plain"; putExtra(Intent.EXTRA_TEXT, "$s\n\nTON FOX 🦊") }
-        startActivity(Intent.createChooser(i, "مشاركة"))
-    }
-
-    private fun createNotificationChannels() {
-        if (Build.VERSION.SDK_INT >= 26) {
-            val mgr = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
-            mgr.createNotificationChannel(NotificationChannel(CHANNEL_ID_DAILY, "TON FOX Word", NotificationManager.IMPORTANCE_DEFAULT))
-        }
-    }
-
-    private fun registerShortcuts() {
-        if (Build.VERSION.SDK_INT >= 25) {
-            try {
-                val mgr = getSystemService(ShortcutManager::class.java)
-                val shortcuts = listOf(
-                    ShortcutInfo.Builder(this, "translate").setShortLabel("ترجم").setIcon(Icon.createWithResource(this, android.R.drawable.ic_menu_edit)).setIntent(Intent(this, MainActivity::class.java).putExtra("screen", "translator").setAction(Intent.ACTION_VIEW)).build(),
-                    ShortcutInfo.Builder(this, "dictionary").setShortLabel("القاموس").setIcon(Icon.createWithResource(this, android.R.drawable.ic_menu_search)).setIntent(Intent(this, MainActivity::class.java).putExtra("screen", "dictionary").setAction(Intent.ACTION_VIEW)).build()
-                )
-                mgr?.dynamicShortcuts = shortcuts
-            } catch (_: Exception) {}
-        }
-    }
-
-    private fun updateWidgetData() {
-        val w = todaysWord()
-        prefs.edit().putString("widget_today", w.first).putString("widget_today_fr", w.second).apply()
-        sendBroadcast(Intent(this, TonFoxWidget::class.java).apply { action = AppWidgetManager.ACTION_APPWIDGET_UPDATE })
-    }
-
-    private fun loadSettings() {
-        isDarkTheme = prefs.getBoolean("theme_dark", true)
-        accentMode = prefs.getString("accent", "gold") ?: "gold"
-        ttsSpeed = prefs.getFloat("tts_speed", 1.0f).coerceIn(0.5f, 2.0f)
-        ttsAutoSpeak = prefs.getBoolean("auto_speak", false)
-        soundEnabled = prefs.getBoolean("sound", true)
-        fontChoice = prefs.getString("font", "default") ?: "default"
-    }
-
-    private fun applyTheme() {
-        if (isDarkTheme) {
-            colorBg = Color.parseColor("#0B0914"); colorPanel = Color.parseColor("#171324")
-            colorText = Color.parseColor("#F5F5F5"); colorMuted = Color.parseColor("#8A8F9C"); colorBorder = Color.parseColor("#332B45")
-        } else {
-            colorBg = Color.parseColor("#F9F7F2"); colorPanel = Color.parseColor("#FFFFFF")
-            colorText = Color.parseColor("#171324"); colorMuted = Color.parseColor("#5D5A66"); colorBorder = Color.parseColor("#E0DBC8")
-        }
-        colorGold = when (accentMode) {
-            "emerald" -> Color.parseColor("#00C48C"); "ruby" -> Color.parseColor("#E03B5A")
-            "sapphire" -> Color.parseColor("#3C7BF7"); else -> Color.parseColor("#FFB800")
-        }
-        colorGoldLight = when (accentMode) {
-            "emerald" -> Color.parseColor("#8AFFD6"); "ruby" -> Color.parseColor("#FF9AB0")
-            "sapphire" -> Color.parseColor("#9DB8FF"); else -> Color.parseColor("#F3D98B")
-        }
-    }
-
-    private fun saveSetting(k: String, v: Any) {
-        val e = prefs.edit()
-        when (v) { is String -> e.putString(k, v); is Int -> e.putInt(k, v); is Float -> e.putFloat(k, v); is Boolean -> e.putBoolean(k, v) }
-        e.apply()
-    }
-
-    private fun loadData() {
-        score = prefs.getInt("score", 0); level = prefs.getInt("level", 1)
-        streakCount = prefs.getInt("streak", 0); lastOpenDate = prefs.getString("last_open", "") ?: ""
-        challengeCompletedDate = prefs.getString("challenge_done", "") ?: ""
-        pointsToday = prefs.getInt("points_today", 0)
-        quizAttempts = prefs.getInt("quiz_attempts", 0); quizCorrect = prefs.getInt("quiz_correct", 0)
-        loadArray("history", history); loadArray("favorites", favorites)
-        try { val a = JSONArray(prefs.getString("lessons", "[]") ?: "[]"); for (i in 0 until a.length()) completed.add(a.optInt(i)) } catch (_: Exception) {}
-        try { val a = JSONArray(prefs.getString("badges", "[]") ?: "[]"); for (i in 0 until a.length()) unlockedBadges.add(a.optString(i)) } catch (_: Exception) {}
-        try {
-            val a = JSONArray(prefs.getString("personal_dict", "[]") ?: "[]")
-            for (i in 0 until a.length()) {
-                val o = a.optJSONObject(i) ?: continue
-                personalDictionary.add(CustomWord(o.optString("id"), o.optString("ar"), o.optString("fr"), o.optString("tags")))
-            }
-        } catch (_: Exception) {}
-        try {
-            val o = JSONObject(prefs.getString("flashcard_states", "{}") ?: "{}")
-            for (k in o.keys()) {
-                val s = o.optJSONObject(k) ?: continue
-                flashcardStates[k] = FlashcardState(k, s.optInt("interval", 0), s.optDouble("ease", 2.5).toFloat(), s.optLong("next", 0L), s.optInt("ok", 0), s.optInt("ko", 0))
-            }
-        } catch (_: Exception) {}
-        try { val a = JSONArray(prefs.getString("recent_searches", "[]") ?: "[]"); for (i in 0 until a.length()) recentDictionarySearches.add(a.optString(i)) } catch (_: Exception) {}
-    }
-
-    private fun loadArray(key: String, target: MutableList<JSONObject>) {
-        try { val a = JSONArray(prefs.getString(key, "[]") ?: "[]"); for (i in 0 until a.length()) a.optJSONObject(i)?.let { target.add(it) } } catch (_: Exception) {}
-    }
-
-    private fun saveData() {
-        val h = JSONArray().apply { history.forEach { put(it) } }
-        val f = JSONArray().apply { favorites.forEach { put(it) } }
-        val l = JSONArray().apply { completed.forEach { put(it) } }
-        val b = JSONArray().apply { unlockedBadges.forEach { put(it) } }
-        val pd = JSONArray().apply { personalDictionary.forEach { put(JSONObject().put("id", it.id).put("ar", it.arabic).put("fr", it.franco).put("tags", it.tags)) } }
-        val fs = JSONObject().apply { flashcardStates.forEach { (k, s) -> put(k, JSONObject().apply { put("interval", s.intervalDays); put("ease", s.easeFactor.toDouble()); put("next", s.nextReviewAt); put("ok", s.correctCount); put("ko", s.wrongCount) }) } }
-        val rs = JSONArray().apply { recentDictionarySearches.forEach { put(it) } }
-        prefs.edit().putInt("score", score).putInt("level", level).putInt("streak", streakCount).putString("last_open", lastOpenDate)
-            .putString("challenge_done", challengeCompletedDate).putInt("points_today", pointsToday)
-            .putInt("quiz_attempts", quizAttempts).putInt("quiz_correct", quizCorrect)
-            .putString("history", h.toString()).putString("favorites", f.toString())
-            .putString("lessons", l.toString()).putString("badges", b.toString())
-            .putString("personal_dict", pd.toString()).putString("flashcard_states", fs.toString()).putString("recent_searches", rs.toString()).apply()
-    }
-
-    private fun updateStreakOnOpen() {
-        val today = SimpleDateFormat("yyyy-MM-dd", Locale.US).format(Date())
-        if (lastOpenDate == today) return
-        val yesterday = SimpleDateFormat("yyyy-MM-dd", Locale.US).format(Calendar.getInstance().apply { add(Calendar.DAY_OF_YEAR, -1) }.time)
-        if (lastOpenDate == yesterday) streakCount++ else streakCount = 1
-        lastOpenDate = today; pointsToday = 0; saveData(); checkStreakBadges()
-    }
-
-    private fun checkStreakBadges() {
-        if (streakCount >= 7 && unlockedBadges.add("streak7")) toast("🎉 وسام: أسبوع متواصل!")
-        if (streakCount >= 30 && unlockedBadges.add("streak30")) toast("🎉 وسام: شهر ملكي!")
-        saveData()
-    }
-
-    private fun unlockBadge(id: String) {
-        if (unlockedBadges.add(id)) {
-            val b = badgeDefinitions.firstOrNull { it.id == id }
-            if (b != null) toast("🎉 وسام جديد: ${b.title}")
-            score += 30; pointsToday += 30; checkLevelUp(); saveData()
-        }
-    }
-
-    private fun checkLevelUp() {
-        val old = level; level = score / 100 + 1
-        if (level > old) { playSound(2); toast("⭐ ارتقيت للمستوى $level!") }
-    }
-
-    private fun toFranco(s: String): String {
-        personalDictionary.firstOrNull { it.arabic.trim() == s.trim() }?.let { return it.franco }
-        when (currentDialect) {
-            "المصرية" -> dialectDictEgyptian[s.trim()]?.let { return it }
-            "الخليجية" -> dialectDictGulf[s.trim()]?.let { return it }
-            "الشامية" -> dialectDictLevantine[s.trim()]?.let { return it }
-            else -> dialectDictIraqi[s.trim()]?.let { return it }
-        }
-        dictionary[s.trim()]?.let { return it }
-        return s.map { arabicMap[it] ?: it.toString() }.joinToString("")
-    }
-
-    private fun toArabic(s: String): String {
-        val reverse = dictionary.entries.associate { it.value.lowercase(Locale.ROOT) to it.key }
-        val revPersonal = personalDictionary.associate { it.franco.lowercase(Locale.ROOT) to it.arabic }
-        val revDialect = when (currentDialect) {
-            "المصرية" -> dialectDictEgyptian.entries.associate { it.value.lowercase(Locale.ROOT) to it.key }
-            "الخليجية" -> dialectDictGulf.entries.associate { it.value.lowercase(Locale.ROOT) to it.key }
-            "الشامية" -> dialectDictLevantine.entries.associate { it.value.lowercase(Locale.ROOT) to it.key }
-            else -> dialectDictIraqi.entries.associate { it.value.lowercase(Locale.ROOT) to it.key }
-        }
-        val lookup = revPersonal + revDialect + reverse
-        lookup[s.trim().lowercase(Locale.ROOT)]?.let { return it }
-        return s.split(Regex("(?<=\\s)|(?=\\s)")).joinToString("") { if (it.isBlank()) it else lookup[it.lowercase(Locale.ROOT)] ?: decodeWord(it) }
-    }
-
-    private fun decodeWord(value: String): String {
-        val pairs = listOf("sh" to "ش", "kh" to "خ", "gh" to "غ", "th" to "ث", "ch" to "چ", "aa" to "ا", "ee" to "ي", "oo" to "و", "2" to "ء", "3" to "ع", "5" to "خ", "6" to "ط", "7" to "ح", "8" to "غ", "9" to "ص", "a" to "ا", "b" to "ب", "t" to "ت", "j" to "ج", "d" to "د", "r" to "ر", "z" to "ز", "s" to "س", "f" to "ف", "q" to "ق", "k" to "ك", "l" to "ل", "m" to "م", "n" to "ن", "h" to "ه", "w" to "و", "y" to "ي")
-        val text = value.lowercase(Locale.ROOT); val out = StringBuilder(); var i = 0
-        while (i < text.length) {
-            val found = pairs.firstOrNull { text.startsWith(it.first, i) }
-            if (found != null) { out.append(found.second); i += found.first.length } else { out.append(text[i]); i++ }
-        }
-        return out.toString()
+    private fun authenticateUser() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+            val executor = mainExecutor
+            val biometricPrompt = BiometricPrompt.Builder(this).setTitle("TON FOX").setSubtitle("تأكيد الهوية").setDescription("استخدم بصمة الإصبع")
+                .setNegativeButton("إلغاء", executor) { _, _ -> finish() }.build()
+            biometricPrompt.authenticate(android.os.CancellationSignal(), executor, object : BiometricPrompt.AuthenticationCallback() {
+                override fun onAuthenticationSucceeded(result: BiometricPrompt.AuthenticationResult?) { super.onAuthenticationSucceeded(result); isAppLocked = false; runOnUiThread { initApp() } }
+                override fun onAuthenticationError(errorCode: Int, errString: CharSequence?) { super.onAuthenticationError(errorCode, errString); toast("فشل: $errString") }
+            })
+        } else { isAppLocked = false; initApp() }
     }
 
     private fun buildShell() {
@@ -495,15 +333,18 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
         val column = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; layoutDirection = View.LAYOUT_DIRECTION_RTL }
         val header = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL; setPadding(dp(16), dp(16), dp(16), dp(16)); setBackgroundColor(colorPanel) }
         header.addView(button("☰", true) { toggleDrawer(true) }, LinearLayout.LayoutParams(dp(52), dp(48)))
-        val heading = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(16), 0, 0, 0); layoutParams = LinearLayout.LayoutParams(0, WRAP_CONTENT, 1f) }
-        heading.addView(label("TON FOX 🦊", 22f, colorGold, true))
-        heading.addView(label(if (streakCount > 0) "🔥 $streakCount يوم متواصل" else "مترجم الفرانكو وأكاديمية التعلم", 11f, colorMuted))
+        
+        val heading = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL; setPadding(dp(16), 0, 0, 0); layoutParams = LinearLayout.LayoutParams(0, WRAP_CONTENT, 1f) }
+        heading.addView(FoxLogoView(this, colorGold), LinearLayout.LayoutParams(dp(32), dp(32)).apply { marginEnd = dp(8) })
+        heading.addView(label("TON FOX", 22f, colorGold, true))
         header.addView(heading)
+        
         if (streakCount > 0) {
-            val flame = label("🔥", 22f, colorGold); flame.setPadding(dp(8), dp(8), dp(8), dp(8))
-            flame.setOnClickListener { AlertDialog.Builder(this).setTitle("🔥 سلسلة الأيام").setMessage("أنت متواصل منذ $streakCount يوماً!\nعد غداً لتحافظ على سلسلتك.").setPositiveButton("حسناً", null).show() }
+            val flame = label("🔥 $streakCount", 16f, colorGold); flame.setPadding(dp(8), dp(8), dp(8), dp(8))
+            flame.setOnClickListener { AlertDialog.Builder(this).setTitle("🔥 سلسلة الأيام").setMessage("أنت متواصل منذ $streakCount يوماً!").setPositiveButton("حسناً", null).show() }
             header.addView(flame)
         }
+        
         page = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(16), dp(16), dp(16), dp(32)) }
         val scroll = ScrollView(this).apply { isFillViewport = true; addView(page) }
         column.addView(header); column.addView(scroll, LinearLayout.LayoutParams(MATCH_PARENT, 0, 1f))
@@ -512,16 +353,9 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
         shade = View(this).apply { setBackgroundColor(withAlpha(Color.BLACK, 0.8f)); visibility = View.GONE; setOnClickListener { toggleDrawer(false) } }
         root.addView(shade, FrameLayout.LayoutParams(MATCH_PARENT, MATCH_PARENT))
         
-        drawer = LinearLayout(this).apply { 
-            orientation = LinearLayout.VERTICAL
-            setBackgroundColor(colorPanel)
-            layoutDirection = View.LAYOUT_DIRECTION_RTL
-            visibility = View.GONE; elevation = dp(16).toFloat() 
-        }
+        drawer = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setBackgroundColor(colorPanel); layoutDirection = View.LAYOUT_DIRECTION_RTL; visibility = View.GONE; elevation = dp(16).toFloat() }
         val drawerScroll = ScrollView(this).apply { isFillViewport = true }
-        drawerContent = LinearLayout(this).apply { 
-            orientation = LinearLayout.VERTICAL; setPadding(dp(20), dp(24), dp(20), dp(24)) 
-        }
+        drawerContent = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(20), dp(24), dp(20), dp(24)) }
         drawerScroll.addView(drawerContent, LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT))
         drawer.addView(drawerScroll, LinearLayout.LayoutParams(MATCH_PARENT, MATCH_PARENT))
         
@@ -530,273 +364,95 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
     }
 
     private fun buildDrawer() {
-        drawerContent.removeAllViews()
-        drawerContent.addView(label("TON FOX 🦊", 26f, colorGold, true))
-        drawerContent.addView(label("القائمة الرئيسية", 13f, colorMuted))
-        gap(drawerContent, 20)
-        
+        drawerContent.removeAllViews(); drawerContent.addView(label("TON FOX 🦊", 26f, colorGold, true)); drawerContent.addView(label("القائمة الرئيسية", 13f, colorMuted)); gap(drawerContent, 20)
         val entries = listOf<Pair<String, () -> Unit>>(
             "الرئيسية" to { showHome() }, "المترجم" to { showTranslator() }, "الأكاديمية" to { showAcademy() },
-            "القاموس" to { showDictionary() }, "قاموسي الشخصي" to { showPersonalDictionary() },
-            "مولّد العبارات" to { showPhraseGenerator() }, "مولّد الأسماء" to { showNameGenerator() },
-            "بطاقات الحفظ (SRS)" to { showFlashcards() }, "المفضلة والسجل" to { showSaved() },
+            "القاموس" to { showDictionary() }, "قاموسي الشخصي" to { showPersonalDictionary() }, "مستشار الثعلب 🦊" to { showFoxChat() },
+            "تصدير المفضلة PDF" to { exportToPdf() }, "بطاقات الحفظ (SRS)" to { showFlashcards() }, "المفضلة والسجل" to { showSaved() },
             "الأوسمة" to { showBadges() }, "المستويات" to { showLevels() }, "التحدي اليومي" to { showDailyChallenge() },
-            "مخطط التقدم" to { showProgressChart() }, "المفضلة السريعة" to { showQuickPhrases() },
-            "الإحصائيات" to { showStatistics() }, "الإعدادات" to { showSettings() },
-            "💬 تواصل مع المطور (@N5CR4)" to { 
-                try { startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("https://t.me/N5CR4"))) } 
-                catch (_: Exception) { toast("تعذر فتح تيليجرام") }
-            }
+            "مخطط التقدم" to { showProgressChart() }, "المفضلة السريعة" to { showQuickPhrases() }, "الإحصائيات" to { showStatistics() },
+            "الإعدادات" to { showSettings() }, "💬 تواصل مع المطور (@N5CR4)" to { try { startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("https://t.me/N5CR4"))) } catch (_: Exception) { toast("تعذر فتح تيليجرام") } }
         )
-        
-        entries.forEach { (name, fn) ->
-            drawerContent.addView(button(name) { toggleDrawer(false); fn() }, LinearLayout.LayoutParams(MATCH_PARENT, dp(50)).apply { bottomMargin = dp(6) })
-        }
-        
-        drawerContent.addView(View(this), LinearLayout.LayoutParams(1, dp(20)))
-        drawerContent.addView(label("TON FOX V4 · N5CR4", 12f, colorMuted))
+        entries.forEach { (name, fn) -> drawerContent.addView(button(name) { toggleDrawer(false); fn() }, LinearLayout.LayoutParams(MATCH_PARENT, dp(50)).apply { bottomMargin = dp(6) }) }
+        drawerContent.addView(label("TON FOX V5", 12f, colorMuted, false))
     }
 
     private fun toggleDrawer(show: Boolean) {
-        if (show) {
-            drawer.visibility = View.VISIBLE; shade.visibility = View.VISIBLE
-            drawer.translationX = dp(300).toFloat()
-            drawer.animate().translationX(0f).setDuration(250).setInterpolator(DecelerateInterpolator()).start()
-            shade.bringToFront(); drawer.bringToFront()
-        } else {
-            drawer.animate().translationX(dp(300).toFloat()).setDuration(250).withEndAction {
-                drawer.visibility = View.GONE; shade.visibility = View.GONE
-            }.start()
-        }
+        if (show) { drawer.visibility = View.VISIBLE; shade.visibility = View.VISIBLE; drawer.translationX = dp(300).toFloat(); drawer.animate().translationX(0f).setDuration(250).start(); shade.bringToFront(); drawer.bringToFront() }
+        else { drawer.animate().translationX(dp(300).toFloat()).setDuration(250).withEndAction { drawer.visibility = View.GONE; shade.visibility = View.GONE }.start() }
     }
-
     private fun clearPage(title: String) { page.removeAllViews(); page.addView(label(title, 24f, colorGold, true)); gap(page, 16) }
-    private fun todaysWord(): Pair<String, String> { val n = SimpleDateFormat("yyyyMMdd", Locale.US).format(Date()).toInt(); return dailyWords[n % dailyWords.size] }
-
-    private fun speakDailyWord() {
-        if (!ttsReady) { toast("محرك النطق غير جاهز"); return }
-        val w = todaysWord()
-        val result = tts?.setLanguage(Locale("ar"))
-        if (result == TextToSpeech.LANG_MISSING_DATA || result == TextToSpeech.LANG_NOT_SUPPORTED) {
-            tts?.language = Locale.US
-            tts?.speak(w.second, TextToSpeech.QUEUE_FLUSH, null, "daily_en")
-        } else {
-            tts?.speak(w.first, TextToSpeech.QUEUE_FLUSH, null, "daily_ar")
-            Handler(Looper.getMainLooper()).postDelayed({
-                tts?.language = Locale.US
-                tts?.speak(w.second, TextToSpeech.QUEUE_ADD, null, "daily_fr")
-            }, 1500)
-        }
-    }
-
-    private fun speak(s: String) { if (!ttsReady || s.isBlank()) return; tts?.language = Locale.US; tts?.setSpeechRate(ttsSpeed); tts?.speak(s, TextToSpeech.QUEUE_FLUSH, null, "sp") }
 
     private fun showHome() {
         clearPage("الرئيسية"); page.tag = "home_tag"; val w = todaysWord()
         addCard {
-            addView(label("أهلاً بك في TON FOX V4", 20f, colorGold, true))
-            addView(label("ترجم وتعلّم الفرانكو خطوة بخطوة.", 15f))
-            addView(label("معالجة محلية دون إنترنت · 40 ميزة", 12f, colorMuted))
+            addView(label("أهلاً بك في TON FOX", 20f, colorGold, true)); addView(label("ترجم وتعلّم الفرانكو خطوة بخطوة.", 15f))
+            addView(button("🔊 استمع لكلمة اليوم", true) { speakDailyWord() })
         }
         addCard {
-            addView(label("🌟 كلمة اليوم", 19f, colorGold, true))
-            addView(label(w.first, 25f, colorText, true)); addView(label(w.second, 22f, colorGold, true))
-            addView(button("🔊 استمع", true) { speakDailyWord() }); gap(this, 8)
+            addView(label("🌟 كلمة اليوم", 19f, colorGold, true)); addView(label(w.first, 25f, colorText, true)); addView(label(w.second, 22f, colorGold, true))
             addView(button("نسخ الفرانكو") { copyText(w.second) })
         }
         addCard {
-            addView(label("🔥 سلسلتك: $streakCount يوم", 18f, colorGold, true))
-            addView(label("المستوى: $level · الخبرة: $score XP"))
-            addView(label("الدروس: ${completed.size}/${lessons.size} · الترجمات: ${history.size}"))
+            addView(label("🔥 سلسلتك: $streakCount يوم", 18f, colorGold, true)); addView(label("المستوى: $level · الخبرة: $score XP"))
             addView(label("أوسمة: ${unlockedBadges.size}/${badgeDefinitions.size}"))
         }
         addAction("📝 ابدأ الترجمة", true) { showTranslator() }
+        addAction("🦊 تحدث مع مستشار الثعلب", true) { showFoxChat() }
         addAction("🎓 الأكاديمية") { showAcademy() }
-        addAction("📚 القاموس") { showDictionary() }
-        addAction("🔥 التحدي اليومي", true) { showDailyChallenge() }
     }
 
-    private val lessons = listOf(
-        Lesson(0, "مقدمة في الفرانكو", "تعرف على طريقة كتابة العربية.", listOf("الفرانكو أسلوب غير رسمي.", "تختلف كتابة الكلمات.", "السياق يساعد على الفهم."), "مرحبا", "mar7aba", "beginner"),
-        Lesson(1, "الحروف الأساسية", "تعلم أشهر المقابلات.", listOf("ب = b", "ت = t", "ش = sh", "خ = kh", "ح = 7"), "كتاب", "ketab", "beginner"),
-        Lesson(2, "الأرقام", "الأرقام تمثل أصواتاً.", listOf("2 = ء", "3 = ع", "5 = خ", "6 = ط", "7 = ح", "8 = غ", "9 = ص"), "حبيبي", "7abibi", "beginner"),
-        Lesson(3, "تكوين الكلمات", "اجمع الحروف.", listOf("اكتب الكلمة كما تنطقها.", "حافظ على نمط ثابت.", "لا توجد كتابة موحدة."), "شكرا", "shukran", "intermediate"),
-        Lesson(4, "المحادثات", "تدرب على العبارات.", listOf("استخدم المسافات.", "اقرأ الجملة كاملة.", "اختصر باعتدال."), "كيف حالك", "keef 7alak", "intermediate"),
-        Lesson(5, "اللهجة العراقية", "مفردات عراقية.", listOf("شلونك = shlonak", "شكو ماكو = shako mako", "هسه = hassa", "زين = zain"), "شلونك", "shlonak", "intermediate"),
-        Lesson(6, "الاحتراف", "حسّن وضوح كتابتك.", listOf("اختر طريقة ثابتة.", "راجع الكلمات الملتبسة.", "لا تعتمد على الحرفي."), "اشتقتلك", "eshta2tellak", "advanced")
-    )
-
-    private fun importBackupFrom(uri: Uri) {
-        try {
-            val raw = contentResolver.openInputStream(uri)?.bufferedReader()?.use { it.readText() } ?: throw IllegalStateException("تعذر قراءة الملف")
-            val j = JSONObject(raw)
-            if (j.optString("app") != "TON FOX") { toast("ملف غير صالح"); return }
-            history.clear(); favorites.clear(); completed.clear(); unlockedBadges.clear(); personalDictionary.clear()
-            val h = j.optJSONArray("history") ?: JSONArray(); for (i in 0 until h.length()) h.optJSONObject(i)?.let { history.add(it) }
-            val f = j.optJSONArray("favorites") ?: JSONArray(); for (i in 0 until f.length()) f.optJSONObject(i)?.let { favorites.add(it) }
-            val l = j.optJSONArray("lessons") ?: JSONArray(); for (i in 0 until l.length()) completed.add(l.optInt(i))
-            val b = j.optJSONArray("badges") ?: JSONArray(); for (i in 0 until b.length()) unlockedBadges.add(b.optString(i))
-            score = j.optInt("score", 0).coerceAtLeast(0); level = j.optInt("level", 1).coerceAtLeast(1); streakCount = j.optInt("streak", 0).coerceAtLeast(0)
-            saveData(); showHome(); toast("تم الاستيراد بنجاح")
-        } catch (e: Exception) { toast("فشل الاستيراد: ${e.message}") }
-    }
-
-    private fun saveHistory(input: String, output: String, direction: String, dialect: String = currentDialect) {
-        history.add(0, JSONObject().put("input", input).put("output", output).put("direction", direction).put("dialect", dialect).put("ts", System.currentTimeMillis()))
-        while (history.size > 500) history.removeAt(history.lastIndex)
-        saveData(); unlockBadge("first"); if (history.size >= 10) unlockBadge("ten"); if (history.size >= 100) unlockBadge("hundred")
-    }
-
-    private fun addFavorite(input: String, output: String) {
-        if (favorites.any { it.optString("input") == input && it.optString("output") == output }) { toast("محفوظة مسبقاً"); return }
-        favorites.add(0, JSONObject().put("input", input).put("output", output).put("ts", System.currentTimeMillis()))
-        saveData(); unlockBadge("save10"); playSound(2); toast("⭐ تم الحفظ في المفضلة")
-    }
-
-    private fun addToPersonalDictionary(arabic: String, franco: String) {
-        if (arabic.isBlank() || franco.isBlank()) { toast("حقول فارغة"); return }
-        if (personalDictionary.any { it.arabic == arabic }) { toast("موجودة في قاموسك"); return }
-        personalDictionary.add(CustomWord(id = UUID.randomUUID().toString().take(8), arabic = arabic, franco = franco))
-        saveData(); playSound(2); toast("📚 أضيفت إلى قاموسك")
-    }
-
-    private fun showTranslator() {
-        clearPage("المترجم"); page.tag = null
-        val charCounter = label("0 حرف · 0 كلمة", 12f, colorMuted)
-        val input = EditText(this).apply {
-            hint = "اكتب النص هنا..."; textSize = 18f; setTextColor(colorText); setHintTextColor(colorMuted)
-            minLines = 4; gravity = Gravity.TOP or Gravity.RIGHT; setPadding(dp(16), dp(16), dp(16), dp(16))
-            background = shape(colorBg, 12, colorGold); layoutDirection = View.LAYOUT_DIRECTION_RTL
-            inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_FLAG_MULTI_LINE
+    private fun showFoxChat() {
+        clearPage("مستشار الثعلب 🦊")
+        val chatContainer = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(0, 0, 0, dp(16)) }
+        val scroll = ScrollView(this).apply { addView(chatContainer); layoutParams = LinearLayout.LayoutParams(MATCH_PARENT, 0, 1f) }
+        
+        fun addMessage(text: String, isUser: Boolean) {
+            val bubble = TextView(this).apply {
+                this.text = text; textSize = 16f; setTextColor(if (isUser) colorBg else colorText)
+                background = shape(if (isUser) colorGold else colorPanel, 16, if (isUser) null else colorGold)
+                setPadding(dp(16), dp(12), dp(16), dp(12)); layoutParams = LinearLayout.LayoutParams(WRAP_CONTENT, WRAP_CONTENT).apply { gravity = if (isUser) Gravity.END else Gravity.START; topMargin = dp(8); bottomMargin = dp(8) }
+            }
+            chatContainer.addView(bubble); scroll.post { scroll.fullScroll(View.FOCUS_DOWN) }
         }
-        sourceText = input
-        val output = TextView(this).apply {
-            text = "ستظهر الترجمة هنا..."; textSize = 19f; setTextColor(colorText)
-            setPadding(dp(16), dp(18), dp(16), dp(18)); background = shape(colorBg, 12, colorBorder)
-            minHeight = dp(90); setTextIsSelectable(true); layoutDirection = View.LAYOUT_DIRECTION_RTL
-        }
-        var liveMode = prefs.getBoolean("live_translate", true)
-        val liveHandler = Handler(Looper.getMainLooper())
-        val liveRunnable = object : Runnable {
-            override fun run() {
-                val s = input.text.toString().trim()
-                if (s.isNotEmpty() && liveMode) { val r = toFranco(s); if (output.text.toString() != r) output.text = r }
+        addMessage("أهلاً بك! أنا الثعلب، مساعدك في الفرانكو. كيف يمكنني مساعدتك اليوم؟", false)
+        
+        val inputRow = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL; setPadding(0, dp(8), 0, 0) }
+        val input = EditText(this).apply { hint = "اكتب رسالتك..."; setTextColor(colorText); setHintTextColor(colorMuted); background = shape(colorPanel, 12, colorBorder); setPadding(dp(12), dp(12), dp(12), dp(12)); layoutParams = LinearLayout.LayoutParams(0, WRAP_CONTENT, 1f) }
+        val sendBtn = button("إرسال", true) {
+            val text = input.text.toString().trim()
+            if (text.isNotEmpty()) {
+                addMessage(text, true); input.setText("")
+                Handler(Looper.getMainLooper()).postDelayed({
+                    val response = when {
+                        text.contains("شلونك") || text.contains("كيفك") -> "أنا بخير، شكراً لسؤالك! شلونك أنت؟"
+                        text.contains("شكرا") -> "العفو! أنا هنا دائماً لمساعدتك."
+                        text.contains("فرانكو") -> "الفرانكو لغة رقمية جميلة، هل تريد تعلم قاعدة جديدة؟"
+                        text.contains("ترجمة") -> "جرب استخدام المترجم في القائمة، سيساعدك فوراً!"
+                        else -> "كلامك جميل! هل تريد أن نتعلم كلمة جديدة اليوم؟"
+                    }
+                    addMessage(response, false); playSound(2)
+                }, 800)
             }
         }
-        input.addTextChangedListener(object : TextWatcher {
-            override fun beforeTextChanged(s: CharSequence?, st: Int, c: Int, a: Int) {}
-            override fun onTextChanged(s: CharSequence?, st: Int, b: Int, c: Int) {
-                val text = s?.toString() ?: ""
-                charCounter.text = "${text.length} حرف · ${if (text.isBlank()) 0 else text.trim().split(Regex("\\s+")).size} كلمة"
-                liveHandler.removeCallbacks(liveRunnable); if (liveMode) liveHandler.postDelayed(liveRunnable, 250)
-            }
-            override fun afterTextChanged(s: Editable?) {}
-        })
-        addCard {
-            addView(label("النص المراد تحويله", 16f, colorGold, true))
-            addView(input, LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT))
-            addView(charCounter); gap(this, 10)
-            addView(label("اللهجة / النمط", 15f, colorGold, true))
-            val spinner = Spinner(this@MainActivity)
-            val dialects = arrayOf("العراقية", "المصرية", "الخليجية", "الشامية", "العربية العامة")
-            spinner.adapter = ArrayAdapter(this@MainActivity, android.R.layout.simple_spinner_dropdown_item, dialects)
-            spinner.setSelection(dialects.indexOf(currentDialect).coerceAtLeast(0))
-            spinner.onItemSelectedListener = object : AdapterView.OnItemSelectedListener {
-                override fun onNothingSelected(p: AdapterView<*>?) {}
-                override fun onItemSelected(p: AdapterView<*>?, v: View?, pos: Int, id: Long) {
-                    currentDialect = dialects[pos]
-                    if (liveMode && input.text.isNotBlank()) output.text = toFranco(input.text.toString())
-                }
-            }
-            addView(spinner); gap(this, 8)
-            addView(button(if (liveMode) "⚡ الترجمة الفورية: مفعلة" else "⚡ الترجمة الفورية: متوقفة") {
-                liveMode = !liveMode; prefs.edit().putBoolean("live_translate", liveMode).apply(); showTranslator()
-            })
-        }
-        addCard {
-            addView(label("النتيجة", 16f, colorGold, true)); addView(output); gap(this, 8)
-            val row1 = LinearLayout(this@MainActivity).apply { orientation = LinearLayout.HORIZONTAL }
-            row1.addView(button("📋 نسخ") { copyText(output.text.toString()) }, LinearLayout.LayoutParams(0, WRAP_CONTENT, 1f).apply { marginEnd = dp(6) })
-            row1.addView(button("🔊 نطق") { speak(output.text.toString()) }, LinearLayout.LayoutParams(0, WRAP_CONTENT, 1f))
-            addView(row1); gap(this, 6)
-            val row2 = LinearLayout(this@MainActivity).apply { orientation = LinearLayout.HORIZONTAL }
-            row2.addView(button("↗ مشاركة نص") { shareText(output.text.toString()) }, LinearLayout.LayoutParams(0, WRAP_CONTENT, 1f).apply { marginEnd = dp(6) })
-            row2.addView(button("📤 كصورة", true) { shareAsImage(output.text.toString()) }, LinearLayout.LayoutParams(0, WRAP_CONTENT, 1f))
-            addView(row2)
-        }
-        addAction("↔️ عربي ← فرانكو", true) {
-            val s = input.text.toString().trim(); if (s.isBlank()) { toast("اكتب نصاً أولاً"); return@addAction }
-            val r = toFranco(s); output.text = r; saveHistory(s, r, "عربي ← فرانكو", currentDialect); hideKeyboard(input); if (ttsAutoSpeak) speak(r)
-        }
-        addAction("↔️ فرانكو ← عربي") {
-            val s = input.text.toString().trim(); if (s.isBlank()) { toast("اكتب نصاً أولاً"); return@addAction }
-            val r = toArabic(s); output.text = r; saveHistory(s, r, "فرانكو ← عربي", currentDialect); hideKeyboard(input); if (ttsAutoSpeak) speak(r)
-        }
-        addAction("🔁 ترجمة عكسية للتحقق") {
-            val s = input.text.toString().trim(); if (s.isBlank()) { toast("اكتب نصاً أولاً"); return@addAction }
-            val franco = toFranco(s); val back = toArabic(franco)
-            AlertDialog.Builder(this).setTitle("التحقق من الفهم").setMessage("الأصل: $s\n\nالفرانكو: $franco\n\nالعودة: $back\n\n${if (s.trim() == back.trim()) "✅ متطابق تماماً" else "⚠️ يوجد اختلاف بسيط"}").setPositiveButton("حسناً", null).show()
-        }
-        addAction("📊 مقارنة اللهجات الأربع") {
-            val s = input.text.toString().trim(); if (s.isBlank()) { toast("اكتب كلمة أولاً"); return@addAction }
-            val res = "العراقية: ${dialectDictIraqi[s] ?: "—"}\nالمصرية: ${dialectDictEgyptian[s] ?: "—"}\nالخليجية: ${dialectDictGulf[s] ?: "—"}\nالشامية: ${dialectDictLevantine[s] ?: "—"}"
-            AlertDialog.Builder(this).setTitle("مقارنة «$s»").setMessage(res).setPositiveButton("حسناً", null).show()
-        }
-        addAction("⭐ إضافة إلى المفضلة") {
-            if (output.text.toString() == "ستظهر الترجمة هنا..." || output.text.isBlank()) { toast("لا توجد ترجمة"); return@addAction }
-            addFavorite(input.text.toString(), output.text.toString())
-        }
-        addAction("📚 حفظ في قاموسي") {
-            val ar = input.text.toString().trim(); if (ar.isBlank()) { toast("اكتب كلمة أولاً"); return@addAction }
-            addToPersonalDictionary(ar, toFranco(ar))
-        }
-        addAction("🔀 تبديل النص والنتيجة") { val old = input.text.toString(); input.setText(output.text.toString()); output.text = old }
-        addAction("🎙 إدخال صوتي") { voiceInput() }
-        addAction("📷 قراءة نص من صورة (كاميرا)") { capturePhotoForOcr() }
-        addAction("🕘 فتح آخر 20 ترجمة") { showRecentTranslationsQuick() }
+        inputRow.addView(input); inputRow.addView(sendBtn)
+        page.addView(scroll); page.addView(inputRow)
     }
-
-    private fun showRecentTranslationsQuick() {
-        if (history.isEmpty()) { toast("لا توجد ترجمات سابقة"); return }
-        val recent = history.take(20)
-        val titles = recent.map { "${it.optString("direction", "")} · ${it.optString("input", "").take(30)}" }.toTypedArray()
-        AlertDialog.Builder(this).setTitle("آخر 20 ترجمة").setItems(titles) { _, i ->
-            showTranslator(); sourceText?.setText(recent[i].optString("input"))
-        }.setNegativeButton("إغلاق", null).show()
-    }
-
-    private fun capturePhotoForOcr() {
-        try {
-            val intent = Intent(MediaStore.ACTION_IMAGE_CAPTURE)
-            if (intent.resolveActivity(packageManager) == null) { toast("الكاميرا غير متوفرة"); return }
-            @Suppress("DEPRECATION") startActivityForResult(intent, REQ_CAPTURE_PHOTO)
-        } catch (e: Exception) { toast("تعذر فتح الكاميرا") }
-    }
-
-    private fun voiceInput() {
-        val i = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
-            putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
-            putExtra(RecognizerIntent.EXTRA_LANGUAGE, "ar"); putExtra(RecognizerIntent.EXTRA_PROMPT, "تحدث الآن")
-        }
-        try { @Suppress("DEPRECATION") startActivityForResult(i, REQ_VOICE) } catch (_: Exception) { toast("التعرف الصوتي غير متاح") }
-    }
-
+    // ============================================================
+    // [الأكاديمية والدروس]
+    // ============================================================
     private fun showAcademy() {
         clearPage("الأكاديمية"); page.tag = null
         var filterDifficulty = "all"
-        var focusMode = prefs.getBoolean("focus_mode", false)
+        
         addCard {
             addView(label("تعلّم الفرانكو خطوة بخطوة", 20f, colorGold, true))
-            addView(label("المستوى $level · $score XP · ${completed.size}/${lessons.size} مكتملة", 14f, colorMuted)); gap(this, 8)
-            addView(button(if (focusMode) "🧘 وضع التركيز: مفعل" else "🧘 تفعيل وضع التركيز") {
-                focusMode = !focusMode; prefs.edit().putBoolean("focus_mode", focusMode).apply(); showAcademy()
-            })
-        }
-        addCard {
-            addView(label("مستوى الصعوبة", 16f, colorGold, true))
+            addView(label("المستوى $level · $score XP · ${completed.size}/${lessons.size} مكتملة", 14f, colorMuted))
+            gap(this, 8)
+            
+            // أزرار تصفية الصعوبة
             val row = LinearLayout(this@MainActivity).apply { orientation = LinearLayout.HORIZONTAL }
-            val diffs = listOf("all" to "الكل", "beginner" to "مبتدئ", "intermediate" to "متوسط", "advanced" to "متقدم")
-            for ((key, name) in diffs) {
+            listOf("all" to "الكل", "beginner" to "مبتدئ", "intermediate" to "متوسط", "advanced" to "متقدم").forEach { (key, name) ->
                 val isSel = filterDifficulty == key
                 row.addView(TextView(this@MainActivity).apply {
                     text = name; textSize = 13f; gravity = Gravity.CENTER
@@ -804,50 +460,53 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
                     background = shape(if (isSel) colorGold else colorPanel, 8, colorGold)
                     setPadding(dp(10), dp(8), dp(10), dp(8)); isClickable = true
                     layoutParams = LinearLayout.LayoutParams(0, WRAP_CONTENT, 1f).apply { marginEnd = dp(4) }
-                    setOnClickListener { filterDifficulty = key; showAcademy() }
+                    setOnClickListener { 
+                        filterDifficulty = key
+                        // إعادة بناء الشاشة بالفلتر الجديد
+                        showAcademyFiltered(filterDifficulty)
+                    }
                 })
             }
             addView(row)
         }
-        val filtered = if (filterDifficulty == "all") lessons else lessons.filter { it.difficulty == filterDifficulty }
+        
+        val filtered = lessons
         filtered.forEach { l ->
             addCard {
                 val done = completed.contains(l.id)
                 val diffLabel = when (l.difficulty) { "beginner" -> "🟢 مبتدئ"; "intermediate" -> "🟡 متوسط"; else -> "🔴 متقدم" }
                 addView(label("${if (done) "✓" else "○"} الدرس ${l.id + 1}: ${l.title}", 17f, colorGold, true))
-                addView(label(diffLabel, 12f, colorMuted)); addView(label(l.desc, 14f, colorMuted)); gap(this, 8)
+                addView(label(diffLabel, 12f, colorMuted))
+                addView(label(l.desc, 14f, colorMuted)); gap(this, 8)
                 addView(button("فتح الدرس") { showLesson(l.id) })
             }
         }
-        if (!focusMode) {
-            addAction("📖 قصة تفاعلية قصيرة", true) { showMiniStory() }
-            addAction("🧪 اختبار شامل", true) { startQuiz(-1) }
-            addAction("🎯 اختبار مستوى محدد") {
-                AlertDialog.Builder(this).setTitle("اختر المستوى").setItems(arrayOf("مبتدئ", "متوسط", "متقدم")) { _, which ->
-                    startQuizDifficulty(arrayOf("beginner", "intermediate", "advanced")[which])
-                }.setNegativeButton("إلغاء", null).show()
-            }
-        }
+        addAction("🧪 اختبار شامل", true) { startQuiz(-1) }
     }
 
-    private fun showMiniStory() {
-        val story = "في صباحٍ جميل، استيقظ «علي» من نومه وقال: صباح الخير يا أمي! ابتسمت أمه وقالت: صباح النور يا حبيبي. خرج علي إلى الشارع، فقابل صديقه «حسن». قال له: شلونك يا حسن؟ رد حسن: زين الحمد لله، شكو ماكو؟ ضحك علي وقال: كل شيء تمام."
-        clearPage("قصة تفاعلية قصيرة")
-        addCard { addView(label("📖 حكاية صباح علي وحسن", 20f, colorGold, true)); addView(label(story, 15f, colorText)) }
+    private fun showAcademyFiltered(filter: String) {
+        // دالة مساعدة لإعادة رسم الأكاديمية مع الفلتر المحدد
+        clearPage("الأكاديمية")
         addCard {
-            addView(label("✨ تحويل فوري", 16f, colorGold, true))
-            addView(label(toFranco("صباح الخير يا أمي!"), 18f, colorGold, true))
-            addView(label(toFranco("شلونك يا حسن؟"), 18f, colorGold, true))
-            addView(label(toFranco("كل شيء تمام."), 18f, colorGold, true))
+            addView(label("تصفية: $filter", 16f, colorGold, true))
+            addView(button("عرض الكل") { showAcademy() })
         }
-        addCard { addView(label("🎧 استمع للقصة", 16f, colorGold, true)); addView(button("نطق القصة كاملة", true) { speak(story) }) }
-        addAction("العودة للأكاديمية", true) { showAcademy() }
+        val filtered = if (filter == "all") lessons else lessons.filter { it.difficulty == filter }
+        filtered.forEach { l ->
+            addCard {
+                val done = completed.contains(l.id)
+                addView(label("${if (done) "✓" else "○"} ${l.title}", 17f, colorGold, true))
+                addView(label(l.desc, 14f, colorMuted)); gap(this, 8)
+                addView(button("فتح الدرس") { showLesson(l.id) })
+            }
+        }
+        addAction("🧪 اختبار", true) { startQuiz(-1) }
     }
 
     private fun showLesson(i: Int) {
-        val l = lessons[i]; clearPage(l.title)
+        val l = lessons[i]; clearPage(l.title); page.tag = null
         addCard {
-            addView(label("الدرس ${i + 1} من ${lessons.size}", 14f, colorGold, true))
+            addView(label("الدرس ${i + 1}", 14f, colorGold, true))
             addView(label(l.desc, 15f))
             l.lines.forEachIndexed { n, line -> addView(label("${n + 1}. $line", 15f)) }
             gap(this, 10); addView(button("🔊 نطق الجملة الأساسية") { speak(l.ar) })
@@ -865,45 +524,35 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
                 if (typed == expected || typed == toFranco(l.ar).replace(" ", "").lowercase(Locale.ROOT)) {
                     val wasNew = completed.add(i)
                     if (wasNew) { score += 20; pointsToday += 20 }
-                    level = score / 100 + 1; if (completed.size >= 5) unlockBadge("five_lessons")
+                    level = score / 100 + 1
+                    if (completed.size >= 5) unlockBadge("five_lessons")
                     saveData(); playSound(2); toast("✔ إجابة صحيحة +20 XP"); showLesson(i)
                 } else { playSound(3); toast("حاول مرة أخرى: ${l.fr}") }
             })
         }
-        addAction("🔊 نطق الجملة", false) { speak(l.ar) }
         addAction("العودة للأكاديمية", true) { showAcademy() }
-    }
-
-    private fun startQuizDifficulty(difficulty: String) {
-        val qs = lessons.filter { it.difficulty == difficulty }.shuffled().take(5)
-        if (qs.isEmpty()) { toast("لا توجد دروس في هذا المستوى"); return }
-        startQuizWithList(qs)
     }
 
     private fun startQuiz(lessonIndex: Int) {
         val qs = if (lessonIndex >= 0) listOf(lessons[lessonIndex]) else lessons.shuffled().take(5)
-        startQuizWithList(qs)
-    }
-
-    private fun startQuizWithList(questions: List<Lesson>) {
         var pos = 0; var correct = 0; quizAttempts++
         fun next() {
-            if (pos >= questions.size) {
-                val earned = correct * 10; score += earned; level = score / 100 + 1; pointsToday += earned; quizCorrect += correct
-                unlockBadge("first_quiz"); if (correct == questions.size) unlockBadge("perfect_quiz")
+            if (pos >= qs.size) {
+                val earned = correct * 10; score += earned; level = score / 100 + 1
+                pointsToday += earned; quizCorrect += correct
+                unlockBadge("first_quiz"); if (correct == qs.size) unlockBadge("perfect_quiz")
                 saveData(); playSound(2); clearPage("نتيجة الاختبار")
                 addCard {
                     addView(label("انتهى الاختبار!", 23f, colorGold, true))
-                    addView(label("الإجابات الصحيحة: $correct/${questions.size}", 17f))
+                    addView(label("الإجابات الصحيحة: $correct/${qs.size}", 17f))
                     addView(label("+$earned XP", 18f, colorGold))
-                    if (correct == questions.size) addView(label("🌟 علامة كاملة!", 18f, colorGold, true))
                 }
                 addAction("العودة للأكاديمية", true) { showAcademy() }
                 return
             }
-            val l = questions[pos]; val expected = toFranco(l.ar)
+            val l = qs[pos]; val expected = toFranco(l.ar)
             val choices = (listOf(expected) + lessons.filter { it != l }.map { toFranco(it.ar) }.shuffled().take(3)).distinct().shuffled()
-            clearPage("السؤال ${pos + 1}/${questions.size}")
+            clearPage("السؤال ${pos + 1}/${qs.size}")
             addCard {
                 addView(label("حوّل إلى فرانكو:", 16f, colorMuted)); addView(label(l.ar, 24f, colorGold, true)); gap(this, 8)
                 choices.forEach { choice ->
@@ -917,201 +566,101 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
         next()
     }
 
+    // ============================================================
+    // [القاموس وقاموسي الشخصي]
+    // ============================================================
     private fun showDictionary() {
         clearPage("القاموس"); page.tag = null
         val search = EditText(this).apply {
             hint = "ابحث بالعربية أو الفرانكو"; setTextColor(colorText); setHintTextColor(colorMuted)
-            background = shape(colorPanel, 12, colorGold); setPadding(dp(14), dp(14), dp(14), dp(14))
-            layoutDirection = View.LAYOUT_DIRECTION_RTL
-        }
-        page.addView(search, LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT).apply { bottomMargin = dp(8) })
-        if (recentDictionarySearches.isNotEmpty()) {
-            val chipsRow = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
-            for (t in recentDictionarySearches.take(5)) {
-                chipsRow.addView(TextView(this).apply {
-                    text = t; textSize = 11f; gravity = Gravity.CENTER; setTextColor(colorGold)
-                    background = shape(colorPanel, 12, colorGold); setPadding(dp(10), dp(6), dp(10), dp(6))
-                    isClickable = true; layoutParams = LinearLayout.LayoutParams(WRAP_CONTENT, WRAP_CONTENT).apply { marginEnd = dp(6) }
-                    setOnClickListener { search.setText(t) }
-                })
-            }
-            page.addView(HorizontalScrollView(this).apply { addView(chipsRow) }, LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT).apply { bottomMargin = dp(10) })
+            background = shape(colorPanel, 12, colorGold); setPadding(dp(14), dp(14), dp(14), dp(14)); layoutDirection = View.LAYOUT_DIRECTION_RTL
         }
         val results = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
-        page.addView(results)
-        fun addRecent(term: String) {
-            if (term.isBlank()) return
-            recentDictionarySearches.remove(term); recentDictionarySearches.add(0, term)
-            while (recentDictionarySearches.size > 20) recentDictionarySearches.removeAt(recentDictionarySearches.lastIndex)
-            saveData()
-        }
-        fun render(q: String) {
-            results.removeAllViews()
-            val merged = linkedMapOf<String, String>(); merged.putAll(dictionary); personalDictionary.forEach { merged[it.arabic] = it.franco }
-            val filtered = merged.filter { it.key.contains(q, true) || it.value.contains(q, true) }
-            if (filtered.isEmpty()) {
-                val c = card()
-                c.addView(label("لا نتائج لـ «$q»", 15f, colorMuted))
-                c.addView(button("➕ إضافة إلى قاموسي") { if (q.isNotBlank()) { addToPersonalDictionary(q, toFranco(q)); render(q) } })
-                results.addView(c, LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT).apply { bottomMargin = dp(10) })
-            }
-            filtered.forEach { (ar, fr) ->
-                val c = card()
-                c.addView(label(ar, 19f, colorText, true)); c.addView(label(fr, 18f, colorGold))
-                if (personalDictionary.any { it.arabic == ar }) c.addView(label("⭐ كلمة من قاموسك الشخصي", 11f, colorGold))
-                val row = LinearLayout(this@MainActivity).apply { orientation = LinearLayout.HORIZONTAL }
-                row.addView(button("📋 نسخ") { copyText(fr) }, LinearLayout.LayoutParams(0, WRAP_CONTENT, 1f).apply { marginEnd = dp(4) })
-                row.addView(button("🔊 نطق") { speak(fr) }, LinearLayout.LayoutParams(0, WRAP_CONTENT, 1f).apply { marginEnd = dp(4) })
-                row.addView(button("⭐") { addFavorite(ar, fr) }, LinearLayout.LayoutParams(0, WRAP_CONTENT, 1f))
-                c.addView(row)
-                results.addView(c, LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT).apply { bottomMargin = dp(10) })
-            }
-        }
+        page.addView(search, LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT).apply { bottomMargin = dp(8) }); gap(page); page.addView(results)
+        
         search.addTextChangedListener(object : TextWatcher {
-            override fun beforeTextChanged(s: CharSequence?, st: Int, c: Int, a: Int) {}
-            override fun onTextChanged(s: CharSequence?, st: Int, b: Int, c: Int) { val q = s?.toString().orEmpty(); render(q); if (q.length >= 2) addRecent(q) }
+            override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {
+                val q = s?.toString().orEmpty(); results.removeAllViews()
+                val merged = linkedMapOf<String, String>(); merged.putAll(dictionary); personalDictionary.forEach { merged[it.arabic] = it.franco }
+                val filtered = merged.filter { it.key.contains(q, true) || it.value.contains(q, true) }
+                if (filtered.isEmpty() && q.isNotBlank()) {
+                    val c = card(); c.addView(label("لا نتائج", 15f, colorMuted)); c.addView(button("➕ إضافة للقاموس") { addToPersonalDictionary(q, toFranco(q)); showDictionary() }); results.addView(c)
+                }
+                filtered.forEach { (ar, fr) ->
+                    val c = card(); c.addView(label(ar, 18f, colorGold, true)); c.addView(label(fr, 16f, colorText))
+                    val row = LinearLayout(this@MainActivity).apply { orientation = LinearLayout.HORIZONTAL }
+                    row.addView(button("نسخ") { copyText(fr) }, LinearLayout.LayoutParams(0, WRAP_CONTENT, 1f).apply { marginEnd = dp(4) })
+                    row.addView(button("نطق") { speak(fr) }, LinearLayout.LayoutParams(0, WRAP_CONTENT, 1f))
+                    c.addView(row)
+                    results.addView(c, LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT).apply { bottomMargin = dp(8) })
+                }
+            }
+            override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) {}
             override fun afterTextChanged(s: Editable?) {}
         })
-        render("")
     }
 
     private fun showPersonalDictionary() {
         clearPage("قاموسي الشخصي"); page.tag = null
-        addCard {
-            addView(label("📚 ${personalDictionary.size} كلمة في قاموسك", 17f, colorGold, true))
-            addView(label("هذه الكلمات تُستخدم قبل القاموس العام.", 12f, colorMuted))
-        }
-        if (personalDictionary.isEmpty()) {
-            addCard { addView(label("لم تُضف أي كلمة بعد.", 15f, colorMuted)); addView(label("استخدم زر «حفظ في قاموسي» من المترجم.", 12f, colorMuted)) }
-        } else {
-            personalDictionary.toList().forEach { w ->
-                addCard {
-                    addView(label(w.arabic, 19f, colorText, true)); addView(label(w.franco, 18f, colorGold))
-                    val row = LinearLayout(this@MainActivity).apply { orientation = LinearLayout.HORIZONTAL }
-                    row.addView(button("📋 نسخ") { copyText(w.franco) }, LinearLayout.LayoutParams(0, WRAP_CONTENT, 1f).apply { marginEnd = dp(4) })
-                    row.addView(button("🗑 حذف") {
-                        AlertDialog.Builder(this@MainActivity).setTitle("حذف؟").setMessage("حذف «${w.arabic}»؟").setPositiveButton("حذف") { _, _ -> personalDictionary.remove(w); saveData(); showPersonalDictionary() }.setNegativeButton("إلغاء", null).show()
-                    }, LinearLayout.LayoutParams(0, WRAP_CONTENT, 1f))
-                    addView(row)
-                }
+        addCard { addView(label("الكلمات المضافة: ${personalDictionary.size}", 18f, colorGold, true)) }
+        personalDictionary.forEach { w ->
+            addCard {
+                addView(label(w.arabic, 18f, colorText, true)); addView(label(w.franco, 16f, colorGold))
+                addView(button("حذف") { personalDictionary.remove(w); saveData(); showPersonalDictionary() })
             }
         }
-        addAction("➕ إضافة كلمة جديدة", true) { showAddPersonalWord() }
     }
 
-    private fun showAddPersonalWord() {
-        val ar = EditText(this).apply { hint = "الكلمة بالعربية"; setTextColor(colorText); setHintTextColor(colorMuted); background = shape(colorBg, 10, colorGold); setPadding(dp(12), dp(12), dp(12), dp(12)) }
-        val fr = EditText(this).apply { hint = "الكتابة بالفرانكو"; setTextColor(colorText); setHintTextColor(colorMuted); background = shape(colorBg, 10, colorGold); setPadding(dp(12), dp(12), dp(12), dp(12)) }
-        val layout = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(16), dp(12), dp(16), dp(4)) }
-        layout.addView(label("الكلمة بالعربية:", 13f, colorMuted)); layout.addView(ar); gap(layout, 8)
-        layout.addView(label("الكتابة بالفرانكو:", 13f, colorMuted)); layout.addView(fr)
-        AlertDialog.Builder(this).setTitle("إضافة كلمة").setView(layout).setPositiveButton("حفظ") { _, _ -> addToPersonalDictionary(ar.text.toString(), fr.text.toString()); showPersonalDictionary() }.setNegativeButton("إلغاء", null).show()
+    private fun addToPersonalDictionary(ar: String, fr: String) {
+        if (ar.isBlank() || fr.isBlank()) return
+        personalDictionary.add(CustomWord(UUID.randomUUID().toString().take(6), ar, fr))
+        saveData(); playSound(2); toast("📚 أضيفت")
     }
 
-    private fun showPhraseGenerator() {
-        clearPage("مولّد العبارات"); page.tag = null
-        val categories = linkedMapOf(
-            "تحيات" to listOf("صباح الخير", "مساء الخير", "أهلاً وسهلاً", "كيف حالك", "شلونك", "أهلاً بك"),
-            "مجاملات" to listOf("أنت رائع", "أحسنت", "مبروك", "بالتوفيق", "الله يوفقك", "كل عام وأنت بخير"),
-            "اعتذار" to listOf("آسف", "أعتذر", "لم أقصد", "سامحني", "حقك علي"),
-            "شكر" to listOf("شكراً", "شكراً جزيلاً", "ممتن لك", "الله يعطيك العافية", "جزاك الله خيراً"),
-            "دعاء" to listOf("الله يسعدك", "الله يحفظك", "الله يرزقك", "الله يشافيك", "الله يعينك"),
-            "وداع" to listOf("إلى اللقاء", "أراك لاحقاً", "تصبح على خير", "في أمان الله", "مع السلامة")
-        )
-        val rnd = Random()
-        addCard {
-            addView(label("🎯 اختر فئة أو ولّد عشوائياً", 16f, colorGold, true))
-            categories.keys.forEach { cat ->
-                addView(button("🎲 $cat") {
-                    val phrase = categories[cat]!!.random()
-                    AlertDialog.Builder(this@MainActivity).setTitle(phrase).setMessage("الفرانكو: ${toFranco(phrase)}").setPositiveButton("نسخ") { _, _ -> copyText(toFranco(phrase)) }.setNeutralButton("نطق") { _, _ -> speak(phrase) }.setNegativeButton("إغلاق", null).show()
-                }); gap(this, 6)
-            }
-            addView(button("🎰 جملة عشوائية", true) {
-                val all = categories.values.flatten(); val phrase = all[rnd.nextInt(all.size)]
-                AlertDialog.Builder(this@MainActivity).setTitle(phrase).setMessage("الفرانكو: ${toFranco(phrase)}").setPositiveButton("نسخ") { _, _ -> copyText(toFranco(phrase)) }.setNeutralButton("نطق") { _, _ -> speak(phrase) }.setNegativeButton("إغلاق", null).show()
-            })
-        }
-    }
-
-    private fun showNameGenerator() {
-        clearPage("مولّد الأسماء"); page.tag = null
-        val maleNames = listOf("محمد", "أحمد", "علي", "حسن", "حسين", "كرار", "مصطفى", "حيدر", "يوسف", "آدم", "ليث", "زين")
-        val femaleNames = listOf("مريم", "زهراء", "فاطمة", "سارة", "ياسمين", "نور", "هند", "آية", "رقية", "زينب", "خديجة", "عائشة")
-        var gender = prefs.getString("name_gender", "male") ?: "male"
-        val output = label("اضغط لتوليد اسم", 27f, colorGold, true); output.gravity = Gravity.CENTER
-        addCard {
-            addView(label("اختر الجنس:", 14f, colorMuted))
-            val row = LinearLayout(this@MainActivity).apply { orientation = LinearLayout.HORIZONTAL }
-            row.addView(button("👨 ذكر") { gender = "male"; saveSetting("name_gender", gender); showNameGenerator() }, LinearLayout.LayoutParams(0, WRAP_CONTENT, 1f).apply { marginEnd = dp(6) })
-            row.addView(button("👩 أنثى") { gender = "female"; saveSetting("name_gender", gender); showNameGenerator() }, LinearLayout.LayoutParams(0, WRAP_CONTENT, 1f))
-            addView(row); gap(this, 12); addView(output); gap(this, 10)
-            addView(button("✨ توليد اسم جديد", true) {
-                val name = (if (gender == "female") femaleNames else maleNames).random()
-                output.text = "$name\n${toFranco(name)}"; playSound(2)
-            })
-            val row2 = LinearLayout(this@MainActivity).apply { orientation = LinearLayout.HORIZONTAL }
-            row2.addView(button("📋 نسخ الاسم") { copyText(output.text.toString().substringBefore("\n")) }, LinearLayout.LayoutParams(0, WRAP_CONTENT, 1f).apply { marginEnd = dp(6) })
-            row2.addView(button("📋 نسخ الفرانكو") { copyText(output.text.toString().substringAfter("\n", "")) }, LinearLayout.LayoutParams(0, WRAP_CONTENT, 1f))
-            addView(row2)
-        }
-    }
-
+    // ============================================================
+    // [البطاقات الذكية SRS]
+    // ============================================================
     private fun showFlashcards() {
         clearPage("بطاقات الحفظ (SRS)"); page.tag = null
         val now = System.currentTimeMillis()
         val allWords = (dictionary.keys + personalDictionary.map { it.arabic }).toList()
         val due = allWords.filter { val s = flashcardStates[it]; s == null || s.nextReviewAt <= now }
         val learned = flashcardStates.size
+        
         addCard {
             addView(label("🧠 التكرار المتباعد (SM-2)", 17f, colorGold, true))
             addView(label("مستحق اليوم: ${due.size} · في قاعدتك: $learned", 13f, colorMuted))
         }
         if (due.isEmpty()) {
-            addCard {
-                addView(label("✨ لا توجد بطاقات مستحقة الآن!", 16f, colorGold, true))
-                addView(button("🎲 مراجعة عشوائية (5 كلمات)", true) { startFlashcardSession(allWords.shuffled().take(5)) })
-            }
+            addCard { addView(label("✨ لا توجد بطاقات مستحقة!", 16f, colorGold, true)); addView(button("🎲 مراجعة عشوائية") { startFlashcardSession(allWords.shuffled().take(5)) }) }
         } else {
-            addCard {
-                addView(label("📚 ابدأ المراجعة (${due.size} كلمة)", 16f, colorGold, true))
-                addView(button("▶️ ابدأ المراجعة", true) { startFlashcardSession(due.take(20)) })
-                addView(button("🎲 مراجعة عشوائية (5 كلمات)") { startFlashcardSession(allWords.shuffled().take(5)) })
-            }
+            addCard { addView(label("📚 ابدأ المراجعة", 16f, colorGold, true)); addView(button("▶️ ابدأ (${due.size})", true) { startFlashcardSession(due.take(20)) }) }
         }
     }
 
     private fun startFlashcardSession(words: List<String>) {
-        if (words.isEmpty()) { toast("لا توجد كلمات"); return }
-        var pos = 0; var correct = 0
+        if (words.isEmpty()) return; var pos = 0; var correct = 0
         fun next() {
             if (pos >= words.size) {
-                val earned = correct * 5; score += earned; pointsToday += earned
-                checkLevelUp(); saveData(); playSound(2); clearPage("انتهت المراجعة")
-                addCard { addView(label("✅ انتهت المراجعة!", 22f, colorGold, true)); addView(label("صحيحة: $correct/${words.size}", 16f)); addView(label("+$earned XP", 18f, colorGold, true)) }
-                addAction("العودة للبطاقات", true) { showFlashcards() }
-                return
+                score += correct * 5; checkLevelUp(); saveData(); playSound(2); clearPage("انتهت المراجعة")
+                addCard { addView(label("✅ انتهت المراجعة!", 22f, colorGold, true)); addView(label("+${correct * 5} XP", 18f, colorGold)) }
+                addAction("العودة", true) { showFlashcards() }; return
             }
-            val word = words[pos]; val franco = toFranco(word)
-            clearPage("بطاقة ${pos + 1}/${words.size}")
+            val word = words[pos]; val franco = toFranco(word); clearPage("بطاقة ${pos + 1}/${words.size}")
             addCard {
-                addView(label("الكلمة العربية:", 13f, colorMuted)); addView(label(word, 32f, colorGold, true)); gap(this, 12)
-                val answerView = label("• • • • •", 24f, colorMuted, true); answerView.gravity = Gravity.CENTER
-                addView(answerView)
-                addView(button("👁 إظهار الإجابة", true) { answerView.text = franco; answerView.setTextColor(colorGold) })
-                gap(this, 12); addView(label("هل تذكرتها؟", 14f, colorMuted))
+                addView(label(word, 32f, colorGold, true)); gap(this, 12)
+                val ans = label("•••••", 24f, colorMuted); ans.gravity = Gravity.CENTER; addView(ans)
+                addView(button("👁 إظهار الإجابة", true) { ans.text = franco; ans.setTextColor(colorGold) }); gap(this, 12)
                 val row = LinearLayout(this@MainActivity).apply { orientation = LinearLayout.HORIZONTAL }
                 row.addView(button("✓ تذكرت") {
-                    val s = flashcardStates[word] ?: FlashcardState(word)
-                    val newEase = (s.easeFactor + 0.1f).coerceAtMost(3.0f)
-                    val newInterval = if (s.intervalDays == 0) 1 else (s.intervalDays * newEase).toInt().coerceIn(1, 365)
-                    flashcardStates[word] = s.copy(intervalDays = newInterval, easeFactor = newEase, nextReviewAt = System.currentTimeMillis() + newInterval * 24L * 3600 * 1000, correctCount = s.correctCount + 1)
+                    val s = flashcardStates[word] ?: FlashcardState(word); val e = (s.easeFactor + 0.1f).coerceAtMost(3.0f)
+                    val i = if (s.intervalDays == 0) 1 else (s.intervalDays * e).toInt().coerceIn(1, 365)
+                    flashcardStates[word] = s.copy(intervalDays = i, easeFactor = e, nextReviewAt = System.currentTimeMillis() + i * 86400000L, correctCount = s.correctCount + 1)
                     correct++; pos++; playSound(2); saveData(); next()
                 }, LinearLayout.LayoutParams(0, WRAP_CONTENT, 1f).apply { marginEnd = dp(6) })
                 row.addView(button("✗ لم أتذكر") {
                     val s = flashcardStates[word] ?: FlashcardState(word)
-                    val newEase = (s.easeFactor - 0.2f).coerceAtLeast(1.3f)
-                    flashcardStates[word] = s.copy(intervalDays = 1, easeFactor = newEase, nextReviewAt = System.currentTimeMillis() + 24L * 3600 * 1000, wrongCount = s.wrongCount + 1)
+                    flashcardStates[word] = s.copy(intervalDays = 1, easeFactor = (s.easeFactor - 0.2f).coerceAtLeast(1.3f), nextReviewAt = System.currentTimeMillis() + 86400000L, wrongCount = s.wrongCount + 1)
                     pos++; playSound(3); saveData(); next()
                 }, LinearLayout.LayoutParams(0, WRAP_CONTENT, 1f))
                 addView(row)
@@ -1120,48 +669,31 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
         next()
     }
 
+    // ============================================================
+    // [المفضلة، الأوسمة، الإحصائيات]
+    // ============================================================
     private fun showSaved() {
         clearPage("المفضلة والسجل"); page.tag = null
         addCard { addView(label("⭐ المفضلة (${favorites.size})", 19f, colorGold, true)) }
-        if (favorites.isEmpty()) addCard { addView(label("لا توجد عبارات محفوظة.", 15f, colorMuted)) }
-        favorites.toList().forEach { item ->
+        favorites.forEach { item ->
             addCard {
-                addView(label(item.optString("input"), 17f, colorText, true)); addView(label(item.optString("output"), 17f, colorGold))
+                addView(label(item.optString("input"), 16f, colorText)); addView(label(item.optString("output"), 16f, colorGold))
                 val row = LinearLayout(this@MainActivity).apply { orientation = LinearLayout.HORIZONTAL }
-                row.addView(button("📋 نسخ") { copyText(item.optString("output")) }, LinearLayout.LayoutParams(0, WRAP_CONTENT, 1f).apply { marginEnd = dp(4) })
-                row.addView(button("🗑") { favorites.remove(item); saveData(); showSaved() }, LinearLayout.LayoutParams(0, WRAP_CONTENT, 1f))
+                row.addView(button("نسخ") { copyText(item.optString("output")) }, LinearLayout.LayoutParams(0, WRAP_CONTENT, 1f).apply { marginEnd = dp(4) })
+                row.addView(button("حذف") { favorites.remove(item); saveData(); showSaved() }, LinearLayout.LayoutParams(0, WRAP_CONTENT, 1f))
                 addView(row)
             }
         }
-        addCard { addView(label("🕘 سجل الترجمات (${history.size})", 19f, colorGold, true)) }
-        history.take(50).forEach { item ->
-            addCard {
-                addView(label(item.optString("direction", ""), 12f, colorGold)); addView(label(item.optString("input"), 16f, colorText, true)); addView(label(item.optString("output"), 16f, colorMuted))
-                val row = LinearLayout(this@MainActivity).apply { orientation = LinearLayout.HORIZONTAL }
-                row.addView(button("♻️ استخدام") { showTranslator(); sourceText?.setText(item.optString("input")) }, LinearLayout.LayoutParams(0, WRAP_CONTENT, 1f).apply { marginEnd = dp(4) })
-                row.addView(button("⭐ حفظ") { addFavorite(item.optString("input"), item.optString("output")) }, LinearLayout.LayoutParams(0, WRAP_CONTENT, 1f))
-                addView(row)
-            }
-        }
-        addAction("🗑 مسح السجل") { AlertDialog.Builder(this).setTitle("مسح السجل؟").setNegativeButton("إلغاء", null).setPositiveButton("حذف") { _, _ -> history.clear(); saveData(); showSaved() }.show() }
+        addAction("تصدير المفضلة PDF", true) { exportToPdf() }
     }
 
     private fun showBadges() {
         clearPage("الأوسمة"); page.tag = null
-        addCard {
-            addView(label("🏆 الأوسمة", 20f, colorGold, true))
-            addView(label("مفتوحة: ${unlockedBadges.size} من ${badgeDefinitions.size}", 13f, colorMuted))
-            addView(ProgressBar(this@MainActivity, null, android.R.attr.progressBarStyleHorizontal).apply { max = 100; progress = if (badgeDefinitions.isEmpty()) 0 else (unlockedBadges.size * 100) / badgeDefinitions.size; progressTintList = ColorStateList.valueOf(colorGold) })
-        }
-        for (b in badgeDefinitions) {
-            val unlocked = unlockedBadges.contains(b.id)
+        badgeDefinitions.forEach { b ->
             addCard {
-                val row = LinearLayout(this@MainActivity).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL }
-                row.addView(TextView(this@MainActivity).apply { text = b.icon; textSize = 36f; alpha = if (unlocked) 1f else 0.3f; setPadding(0, 0, dp(16), 0) })
-                val col = LinearLayout(this@MainActivity).apply { orientation = LinearLayout.VERTICAL }
-                col.addView(label(b.title, 17f, if (unlocked) colorGold else colorMuted, true))
-                col.addView(label(b.desc, 13f, colorMuted)); col.addView(label(if (unlocked) "✅ مفتوح" else "🔒 مقفل", 11f, if (unlocked) colorGold else colorMuted))
-                row.addView(col); addView(row)
+                val unlocked = unlockedBadges.contains(b.id)
+                addView(label(b.icon + " " + b.title, 18f, if (unlocked) colorGold else colorMuted, true))
+                addView(label(b.desc, 14f, colorMuted))
             }
         }
     }
@@ -1169,247 +701,148 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
     private fun showLevels() {
         clearPage("المستويات"); page.tag = null
         addCard {
-            addView(label("🏅 المستوى الحالي: $level", 22f, colorGold, true)); addView(label("الخبرة: $score XP", 16f))
-            val nextLevel = level * 100; val prevLevel = (level - 1) * 100
-            val progress = ((score - prevLevel).coerceAtLeast(0) * 100) / (nextLevel - prevLevel).coerceAtLeast(1)
-            addView(label("التقدم للمستوى ${level + 1}: $progress%", 13f, colorMuted))
-            addView(ProgressBar(this@MainActivity, null, android.R.attr.progressBarStyleHorizontal).apply { max = 100; this.progress = progress; progressTintList = ColorStateList.valueOf(colorGold) })
-        }
-        for (lvl in 1..20) {
-            val req = lvl * 100; val reached = score >= req
-            addCard {
-                val row = LinearLayout(this@MainActivity).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL }
-                row.addView(TextView(this@MainActivity).apply { text = if (reached) "✅" else "🔒"; textSize = 24f; setPadding(0, 0, dp(12), 0) })
-                val col = LinearLayout(this@MainActivity).apply { orientation = LinearLayout.VERTICAL }
-                col.addView(label("المستوى $lvl", 16f, if (reached) colorGold else colorMuted, true)); col.addView(label("يتطلب $req XP", 12f, colorMuted))
-                row.addView(col); addView(row)
-            }
+            addView(label("المستوى الحالي: $level", 20f, colorGold, true)); addView(label("الخبرة: $score XP", 16f))
+            val progress = (score % 100); addView(ProgressBar(this@MainActivity, null, android.R.attr.progressBarStyleHorizontal).apply { max = 100; this.progress = progress; progressTintList = ColorStateList.valueOf(colorGold) })
         }
     }
 
     private fun showDailyChallenge() {
         clearPage("التحدي اليومي"); page.tag = null
-        val today = SimpleDateFormat("yyyy-MM-dd", Locale.US).format(Date())
-        val alreadyDone = challengeCompletedDate == today
-        addCard {
-            addView(label("🎯 التحدي اليومي", 22f, colorGold, true))
-            addView(label(if (alreadyDone) "✅ أكملت تحدّي اليوم!" else "5 أسئلة · مكافأة +50 XP", 14f, colorMuted))
-        }
-        if (alreadyDone) {
-            addCard { addView(label("عد غداً لتحدٍّ جديد!", 18f, colorGold, true)); addView(label("التحدي يتغير كل يوم.", 12f, colorMuted)) }
-            addAction("🏠 العودة للرئيسية", true) { showHome() }
-        } else {
-            addCard { addView(label("هل أنت مستعد؟", 16f, colorGold, true)); addView(label("اختبار 5 أسئلة عشوائية. النجاح الكامل (+50 XP).", 13f, colorMuted)); addView(button("▶️ ابدأ التحدي الآن", true) { startDailyChallenge() }) }
-        }
-    }
-
-    private fun startDailyChallenge() {
-        val qs = lessons.shuffled().take(5)
-        var pos = 0; var correct = 0
-        fun next() {
-            if (pos >= qs.size) {
-                val allCorrect = correct == qs.size
-                if (allCorrect) { score += 50; pointsToday += 50; challengeCompletedDate = SimpleDateFormat("yyyy-MM-dd", Locale.US).format(Date()); checkLevelUp() }
-                saveData(); playSound(if (allCorrect) 2 else 3); clearPage("نتيجة التحدي")
-                addCard {
-                    addView(label(if (allCorrect) "🏆 نجاح كامل!" else "اختبرت التحدي", 22f, colorGold, true))
-                    addView(label("صحيحة: $correct/${qs.size}", 16f))
-                    if (allCorrect) addView(label("+50 XP", 20f, colorGold, true)) else addView(label("لا مكافأة — أعد المحاولة غداً", 13f, colorMuted))
-                }
-                addAction("🏠 العودة للرئيسية", true) { showHome() }
-                return
-            }
-            val l = qs[pos]; val expected = toFranco(l.ar)
-            val choices = (listOf(expected) + lessons.filter { it != l }.map { toFranco(it.ar) }.shuffled().take(3)).distinct().shuffled()
-            clearPage("التحدي ${pos + 1}/${qs.size}")
-            addCard {
-                addView(label("سؤال ${pos + 1} من ${qs.size}", 12f, colorMuted)); addView(label(l.ar, 26f, colorGold, true)); gap(this, 10)
-                choices.forEach { c -> addView(button(c) { if (c == expected) { correct++; playSound(2) } else playSound(3); pos++; next() }); gap(this, 6) }
-            }
-        }
-        next()
+        addCard { addView(label("🎯 التحدي اليومي (+50 XP)", 18f, colorGold, true)); addView(button("ابدأ التحدي", true) { startQuiz(-1) }) }
     }
 
     private fun showProgressChart() {
         clearPage("مخطط التقدم"); page.tag = null
-        val dayFormat = SimpleDateFormat("yyyy-MM-dd", Locale.US); val labelFormat = SimpleDateFormat("EEE", Locale("ar"))
-        val days = mutableListOf<Pair<String, Int>>(); val cal = Calendar.getInstance()
-        for (i in 6 downTo 0) {
-            cal.time = Date(); cal.add(Calendar.DAY_OF_YEAR, -i)
-            val key = dayFormat.format(cal.time); val label = labelFormat.format(cal.time)
-            var count = 0; for (h in history) { val ts = h.optLong("ts", 0L); if (ts > 0 && dayFormat.format(Date(ts)) == key) count++ }
-            days.add(label to count)
-        }
-        val maxCount = (days.maxOfOrNull { it.second } ?: 1).coerceAtLeast(1)
-        addCard {
-            addView(label("📊 نشاطك في آخر 7 أيام", 18f, colorGold, true)); addView(label("الترجمات · كل عمود = يوم", 12f, colorMuted)); gap(this, 12)
-            val chartRow = LinearLayout(this@MainActivity).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.BOTTOM; layoutParams = LinearLayout.LayoutParams(MATCH_PARENT, dp(180)) }
-            for ((label, count) in days) {
-                val col = LinearLayout(this@MainActivity).apply { orientation = LinearLayout.VERTICAL; gravity = Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL; layoutParams = LinearLayout.LayoutParams(0, MATCH_PARENT, 1f) }
-                col.addView(TextView(this@MainActivity).apply { text = if (count > 0) "$count" else ""; textSize = 11f; setTextColor(colorGold); gravity = Gravity.CENTER })
-                val barHeight = if (count == 0) dp(4) else ((count.toFloat() / maxCount) * 140).toInt().coerceAtLeast(dp(8))
-                col.addView(View(this@MainActivity).apply { background = shape(if (count > 0) colorGold else withAlpha(colorMuted, 0.3f), 4); layoutParams = LinearLayout.LayoutParams(MATCH_PARENT, barHeight).apply { leftMargin = dp(6); rightMargin = dp(6) } })
-                col.addView(TextView(this@MainActivity).apply { text = label; textSize = 10f; setTextColor(colorMuted); gravity = Gravity.CENTER; setPadding(0, dp(6), 0, 0) })
-                chartRow.addView(col)
-            }
-            addView(chartRow)
-        }
-        addCard { addView(label("🔥 إجمالي 7 أيام", 16f, colorGold, true)); addView(label("${days.sumOf { it.second }} ترجمة", 22f, colorText, true)); addView(label("سلسلة الأيام الحالية: $streakCount", 13f, colorMuted)) }
-        addAction("🏠 العودة للرئيسية", true) { showHome() }
+        addCard { addView(label("🔥 سلسلتك: $streakCount يوم", 18f, colorGold, true)); addView(label("الترجمات الكلية: ${history.size}", 15f)) }
     }
 
     private fun showQuickPhrases() {
-        clearPage("المفضلة السريعة"); page.tag = null
-        val quickPhrases = listOf("صباح الخير", "مساء الخير", "شلونك", "كل عام وأنت بخير", "شكراً جزيلاً", "الله يعطيك العافية", "مع السلامة", "تصبح على خير")
-        addCard { addView(label("⚡ عبارات جاهزة", 18f, colorGold, true)); addView(label("اضغط للنسخ الفوري", 12f, colorMuted)) }
-        for (phrase in quickPhrases) {
-            val franco = toFranco(phrase)
-            addCard {
-                addView(label(phrase, 17f, colorText, true)); addView(label(franco, 16f, colorGold))
-                val row = LinearLayout(this@MainActivity).apply { orientation = LinearLayout.HORIZONTAL }
-                row.addView(button("📋 نسخ") { copyText(franco) }, LinearLayout.LayoutParams(0, WRAP_CONTENT, 1f).apply { marginEnd = dp(4) })
-                row.addView(button("🔊 نطق") { speak(phrase) }, LinearLayout.LayoutParams(0, WRAP_CONTENT, 1f))
-                addView(row)
-            }
+        clearPage("عبارات سريعة"); page.tag = null
+        listOf("صباح الخير" to "saba7 elkhair", "شلونك" to "shlonak", "شكراً" to "shukran", "وينك" to "wainak").forEach { (ar, fr) ->
+            addCard { addView(label(ar, 18f, colorText)); addView(label(fr, 16f, colorGold)); addView(button("نسخ") { copyText(fr) }) }
         }
     }
 
     private fun showStatistics() {
         clearPage("الإحصائيات"); page.tag = null
-        addCard { addView(label("📊 لوحة الإحصائيات", 20f, colorGold, true)); addView(label("كل الأرقام محلية، لا تغادر جهازك.", 12f, colorMuted)) }
-        addCard { addView(label("📈 النشاط", 16f, colorGold, true)); addView(label("• الترجمات: ${history.size}", 15f)); addView(label("• المفضلة: ${favorites.size}", 15f)); addView(label("• كلمات قاموسك: ${personalDictionary.size}", 15f)) }
-        addCard { addView(label("🎓 التعلّم", 16f, colorGold, true)); addView(label("• الدروس المكتملة: ${completed.size}/${lessons.size}", 15f)); addView(label("• بطاقات SRS: ${flashcardStates.size}", 15f)); addView(label("• محاولات الاختبار: $quizAttempts", 15f)) }
-        addCard { addView(label("🏆 الإنجازات", 16f, colorGold, true)); addView(label("• الأوسمة: ${unlockedBadges.size}/${badgeDefinitions.size}", 15f)); addView(label("• المستوى الحالي: $level", 15f)); addView(label("• الخبرة: $score XP", 15f)); addView(label("• السلسلة: $streakCount يوم", 15f)) }
+        addCard {
+            addView(label("الترجمات: ${history.size}", 16f)); addView(label("المفضلة: ${favorites.size}", 16f))
+            addView(label("المستوى: $level · $score XP", 18f, colorGold, true))
+        }
     }
 
+    // ============================================================
+    // [الإعدادات]
+    // ============================================================
     private fun showSettings() {
         clearPage("الإعدادات"); page.tag = null
         addCard {
-            addView(label("🌓 المظهر", 17f, colorGold, true))
-            val row = LinearLayout(this@MainActivity).apply { orientation = LinearLayout.HORIZONTAL }
-            row.addView(button("🌙 داكن") { isDarkTheme = true; saveSetting("theme_dark", true); applyTheme(); showSettings() }, LinearLayout.LayoutParams(0, WRAP_CONTENT, 1f).apply { marginEnd = dp(6) })
-            row.addView(button("☀️ فاتح") { isDarkTheme = false; saveSetting("theme_dark", false); applyTheme(); showSettings() }, LinearLayout.LayoutParams(0, WRAP_CONTENT, 1f))
-            addView(row)
+            addView(label("🔐 الأمان", 18f, colorGold, true))
+            addView(button("قفل بصمة الإصبع: ${if (isAppLockEnabled) "مفعل" else "متوقف"}") {
+                isAppLockEnabled = !isAppLockEnabled; prefs.edit().putBoolean("app_lock", isAppLockEnabled).apply(); showSettings()
+            })
         }
         addCard {
-            addView(label("🎨 لون التمييز", 17f, colorGold, true))
-            val row = LinearLayout(this@MainActivity).apply { orientation = LinearLayout.HORIZONTAL }
-            val accents = listOf("gold" to "ذهبي", "emerald" to "زمردي", "ruby" to "ياقوتي", "sapphire" to "سماوي")
-            for ((key, name) in accents) {
-                row.addView(TextView(this@MainActivity).apply {
-                    text = name; textSize = 11f; gravity = Gravity.CENTER; setTextColor(if (accentMode == key) colorBg else colorText)
-                    background = shape(if (accentMode == key) colorGold else colorPanel, 8, colorGold); setPadding(dp(6), dp(10), dp(6), dp(10))
-                    isClickable = true; layoutParams = LinearLayout.LayoutParams(0, WRAP_CONTENT, 1f).apply { marginEnd = dp(4) }
-                    setOnClickListener { accentMode = key; saveSetting("accent", key); applyTheme(); showSettings() }
-                })
-            }
-            addView(row)
+            addView(label("🎙 النطق", 18f, colorGold, true))
+            addView(button("نطق تلقائي: ${if (ttsAutoSpeak) "مفعل" else "متوقف"}") { ttsAutoSpeak = !ttsAutoSpeak; prefs.edit().putBoolean("auto_speak", ttsAutoSpeak).apply(); showSettings() })
+            addView(button("🔊 اختبار النطق") { speak("اختبار النطق في TON FOX") })
         }
         addCard {
-            addView(label("⚙️ تفضيلات", 17f, colorGold, true))
-            addView(button(if (ttsAutoSpeak) "🔊 نطق تلقائي: مفعل" else "🔇 نطق تلقائي: متوقف") { ttsAutoSpeak = !ttsAutoSpeak; saveSetting("auto_speak", ttsAutoSpeak); showSettings() })
-            addView(button(if (soundEnabled) "🎵 المؤثرات الصوتية: مفعلة" else "🔕 المؤثرات الصوتية: متوقفة") { soundEnabled = !soundEnabled; saveSetting("sound", soundEnabled); showSettings() })
-        }
-        addCard {
-            addView(label("💾 النسخ الاحتياطي", 17f, colorGold, true))
-            addView(button("📤 تصدير نسخة احتياطية", true) { exportBackup() })
-            addView(button("📥 استيراد نسخة احتياطية") { importBackup() })
-            addView(button("🗑️ حذف جميع البيانات") { confirmClearData() })
-        }
-        addCard {
-            addView(label("ℹ️ عن التطبيق", 17f, colorGold, true))
-            addView(label("TON FOX V4", 16f, colorText, true)); addView(label("المطور: N5CR4", 13f, colorMuted)); addView(label("Telegram: @N5CR4", 13f, colorGold))
-            addView(button("💬 التواصل مع المطور") { try { startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("https://t.me/N5CR4"))) } catch (_: Exception) { toast("تعذر فتح تيليجرام") } })
+            addView(label("💾 البيانات", 18f, colorGold, true))
+            addView(button("حذف جميع البيانات") {
+                AlertDialog.Builder(this).setTitle("تأكيد").setMessage("حذف كل شيء؟").setPositiveButton("نعم") { _, _ ->
+                    history.clear(); favorites.clear(); completed.clear(); score = 0; level = 1; saveData(); showHome(); toast("تم المسح")
+                }.setNegativeButton("لا", null).show()
+            })
         }
     }
 
-    private fun exportBackup() {
+    // ============================================================
+    // [تصدير PDF والمشاركة كصورة]
+    // ============================================================
+    private fun exportToPdf() {
+        if (favorites.isEmpty()) { toast("المفضلة فارغة"); return }
         try {
-            val json = JSONObject().apply {
-                put("app", "TON FOX"); put("version", 4)
-                put("history", JSONArray().apply { history.forEach { put(it) } })
-                put("favorites", JSONArray().apply { favorites.forEach { put(it) } })
-                put("lessons", JSONArray().apply { completed.forEach { put(it) } })
-                put("badges", JSONArray().apply { unlockedBadges.forEach { put(it) } })
-                put("personal_dict", JSONArray().apply { personalDictionary.forEach { put(JSONObject().put("id", it.id).put("ar", it.arabic).put("fr", it.franco)) } })
-                put("score", score).put("level", level).put("streak", streakCount)
-            }
-            val send = Intent(Intent.ACTION_SEND).apply { type = "application/json"; putExtra(Intent.EXTRA_SUBJECT, "TON FOX Backup"); putExtra(Intent.EXTRA_TEXT, json.toString(2)) }
-            startActivity(Intent.createChooser(send, "مشاركة النسخة الاحتياطية"))
-        } catch (e: Exception) { toast("فشل التصدير: ${e.message}") }
+            val intent = Intent(Intent.ACTION_CREATE_DOCUMENT).apply { addCategory(Intent.CATEGORY_OPENABLE); type = "application/pdf"; putExtra(Intent.EXTRA_TITLE, "TON_FOX_Favorites.pdf") }
+            @Suppress("DEPRECATION") startActivityForResult(intent, REQ_PDF)
+        } catch (e: Exception) { toast("تعذر التصدير") }
     }
 
-    private fun importBackup() {
+    private fun generatePdf(uri: Uri) {
         try {
-            val i = Intent(Intent.ACTION_OPEN_DOCUMENT).apply { addCategory(Intent.CATEGORY_OPENABLE); type = "application/json" }
-            @Suppress("DEPRECATION") startActivityForResult(i, REQ_IMPORT)
-        } catch (_: Exception) { toast("تعذر فتح الملفات") }
-    }
-
-    private fun confirmClearData() {
-        AlertDialog.Builder(this).setTitle("⚠️ حذف جميع البيانات").setMessage("سيتم حذف كل شيء. لا يمكن التراجع.").setNegativeButton("إلغاء", null)
-            .setPositiveButton("حذف الكل") { _, _ -> history.clear(); favorites.clear(); completed.clear(); unlockedBadges.clear(); personalDictionary.clear(); flashcardStates.clear(); recentDictionarySearches.clear(); score = 0; level = 1; streakCount = 0; saveData(); showSettings(); toast("تم حذف كل البيانات") }.show()
+            val pdf = PdfDocument(); val pageInfo = PdfDocument.PageInfo.Builder(595, 842, 1).create(); val page = pdf.startPage(pageInfo); val canvas = page.canvas
+            val paint = Paint().apply { color = Color.BLACK; textSize = 14f }; var y = 50f
+            paint.textSize = 24f; paint.isFakeBoldText = true; canvas.drawText("TON FOX - Favorites", 50f, y, paint); y += 40f
+            paint.textSize = 14f; paint.isFakeBoldText = false
+            for (item in favorites) { canvas.drawText("${item.optString("input")} -> ${item.optString("output")}", 50f, y, paint); y += 25f; if (y > 800f) break }
+            pdf.finishPage(page); contentResolver.openOutputStream(uri)?.use { pdf.writeTo(it) }; pdf.close(); toast("✔ تم التصدير"); playSound(2)
+        } catch (e: Exception) { toast("فشل: ${e.message}") }
     }
 
     private fun shareAsImage(text: String) {
-        if (text.isBlank() || text == "ستظهر الترجمة هنا...") { toast("لا توجد ترجمة للمشاركة"); return }
+        if (text.isBlank() || text == "ستظهر الترجمة هنا...") return
         try {
-            val size = 1080; val bmp = Bitmap.createBitmap(size, size, Bitmap.Config.ARGB_8888); val canvas = Canvas(bmp); val paint = Paint(Paint.ANTI_ALIAS_FLAG)
-            paint.color = colorBg; canvas.drawRect(0f, 0f, size.toFloat(), size.toFloat(), paint)
-            paint.color = colorGold; paint.style = Paint.Style.STROKE; paint.strokeWidth = 6f
-            canvas.drawRoundRect(RectF(30f, 30f, size - 30f, size - 30f), 32f, 32f, paint)
+            val bmp = Bitmap.createBitmap(1080, 1080, Bitmap.Config.ARGB_8888); val canvas = Canvas(bmp); val paint = Paint(Paint.ANTI_ALIAS_FLAG)
+            paint.color = colorBg; canvas.drawRect(0f, 0f, 1080f, 1080f, paint)
+            paint.color = colorGold; paint.style = Paint.Style.STROKE; paint.strokeWidth = 6f; canvas.drawRoundRect(RectF(30f, 30f, 1050f, 1050f), 32f, 32f, paint)
             paint.style = Paint.Style.FILL; paint.color = colorGold; paint.textSize = 56f; paint.typeface = Typeface.create(Typeface.SERIF, Typeface.BOLD); paint.textAlign = Paint.Align.CENTER
-            canvas.drawText("TON FOX 🦊", size / 2f, 140f, paint)
-            paint.color = colorMuted; paint.textSize = 30f; paint.typeface = Typeface.DEFAULT; canvas.drawText("مترجم الفرانكو", size / 2f, 190f, paint)
-            paint.color = colorBorder; paint.strokeWidth = 2f; canvas.drawLine(150f, 220f, size - 150f, 220f, paint)
-            paint.color = colorText; paint.textSize = 44f; paint.typeface = Typeface.DEFAULT_BOLD; paint.textAlign = Paint.Align.CENTER
-            val lines = wrapText(text, paint, size - 200f)
-            lines.forEachIndexed { i, line -> if (340f + i * 60f < size - 200f) canvas.drawText(line, size / 2f, 340f + i * 60f, paint) }
-            paint.color = colorMuted; paint.textSize = 24f; paint.typeface = Typeface.DEFAULT; canvas.drawText("صُنع بواسطة TON FOX · @N5CR4", size / 2f, size - 80f, paint)
-            val values = ContentValues().apply { put(MediaStore.Images.Media.TITLE, "TON FOX"); put(MediaStore.Images.Media.MIME_TYPE, "image/png") }
-            val uri = contentResolver.insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, values)
-            if (uri != null) {
-                contentResolver.openOutputStream(uri)?.use { os -> bmp.compress(Bitmap.CompressFormat.PNG, 100, os) }
-                val share = Intent(Intent.ACTION_SEND).apply { type = "image/png"; putExtra(Intent.EXTRA_STREAM, uri); addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION) }
-                startActivity(Intent.createChooser(share, "مشاركة الصورة")); unlockBadge("share")
-            } else { toast("تعذر حفظ الصورة") }
-        } catch (e: Exception) { toast("فشل المشاركة: ${e.message}") }
+            canvas.drawText("TON FOX", 540f, 140f, paint); paint.color = colorText; paint.textSize = 44f; paint.typeface = Typeface.DEFAULT_BOLD
+            canvas.drawText(text, 540f, 540f, paint)
+            val uri = MediaStore.Images.Media.insertImage(contentResolver, bmp, "TON FOX", "Translation")
+            val share = Intent(Intent.ACTION_SEND).apply { type = "image/png"; putExtra(Intent.EXTRA_STREAM, Uri.parse(uri)); addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION) }
+            startActivity(Intent.createChooser(share, "مشاركة"))
+        } catch (e: Exception) { toast("فشل الإنشاء") }
     }
 
-    private fun wrapText(text: String, paint: Paint, maxWidth: Float): List<String> {
-        val words = text.split(" "); val lines = mutableListOf<String>(); var current = StringBuilder()
-        for (word in words) {
-            val test = if (current.isEmpty()) word else "$current $word"
-            if (paint.measureText(test) <= maxWidth) current = StringBuilder(test)
-            else { if (current.isNotEmpty()) lines.add(current.toString()); current = StringBuilder(word) }
-        }
-        if (current.isNotEmpty()) lines.add(current.toString()); return lines
+    // ============================================================
+    // [البيانات والترجمة]
+    // ============================================================
+    private fun loadData() {
+        score = prefs.getInt("score", 0); level = prefs.getInt("level", 1); streakCount = prefs.getInt("streak", 0); lastOpenDate = prefs.getString("last_open", "") ?: ""
+        try { val a = JSONArray(prefs.getString("history", "[]")); for (i in 0 until a.length()) history.add(a.getJSONObject(i)) } catch (_: Exception) {}
+        try { val a = JSONArray(prefs.getString("favorites", "[]")); for (i in 0 until a.length()) favorites.add(a.getJSONObject(i)) } catch (_: Exception) {}
+        try { val a = JSONArray(prefs.getString("lessons", "[]")); for (i in 0 until a.length()) completed.add(a.getInt(i)) } catch (_: Exception) {}
+        try { val a = JSONArray(prefs.getString("badges", "[]")); for (i in 0 until a.length()) unlockedBadges.add(a.getString(i)) } catch (_: Exception) {}
     }
 
-    override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, grantResults: IntArray) {
-        super.onRequestPermissionsResult(requestCode, permissions, grantResults)
-        if (requestCode == REQ_NOTIFY) {
-            if (grantResults.isNotEmpty() && grantResults[0] == PackageManager.PERMISSION_GRANTED) toast("✔ تم تفعيل الإشعارات") else toast("⚠️ الإشعارات معطلة")
-        }
+    private fun saveData() {
+        val h = JSONArray().apply { history.forEach { put(it) } }; val f = JSONArray().apply { favorites.forEach { put(it) } }
+        val l = JSONArray().apply { completed.forEach { put(it) } }; val b = JSONArray().apply { unlockedBadges.forEach { put(it) } }
+        prefs.edit().putInt("score", score).putInt("level", level).putInt("streak", streakCount).putString("last_open", lastOpenDate)
+            .putString("history", h.toString()).putString("favorites", f.toString()).putString("lessons", l.toString()).putString("badges", b.toString()).apply()
     }
 
-    @Deprecated("Deprecated in Java")
+    private fun updateStreakOnOpen() {
+        val today = SimpleDateFormat("yyyy-MM-dd", Locale.US).format(Date()); if (lastOpenDate == today) return
+        val yesterday = SimpleDateFormat("yyyy-MM-dd", Locale.US).format(Calendar.getInstance().apply { add(Calendar.DAY_OF_YEAR, -1) }.time)
+        if (lastOpenDate == yesterday) streakCount++ else streakCount = 1; lastOpenDate = today; saveData()
+    }
+
+    private fun saveHistory(input: String, output: String, dir: String) {
+        history.add(0, JSONObject().put("input", input).put("output", output).put("dir", dir).put("ts", System.currentTimeMillis())); saveData()
+    }
+
+    private fun addFavorite(input: String, output: String) {
+        favorites.add(0, JSONObject().put("input", input).put("output", output)); saveData(); toast("⭐ تم الحفظ")
+    }
+
+    private fun unlockBadge(id: String) {
+        if (unlockedBadges.add(id)) { score += 30; saveData(); playSound(2); toast("🎉 وسام جديد!") }
+    }
+
+    private fun checkLevelUp() {
+        val old = level; level = score / 100 + 1
+        if (level > old) { playSound(2); toast("⭐ ارتقيت للمستوى $level!") }
+    }
+
+    private fun shareText(s: String) { val i = Intent(Intent.ACTION_SEND).apply { type = "text/plain"; putExtra(Intent.EXTRA_TEXT, "$s\n\nTON FOX 🦊") }; startActivity(Intent.createChooser(i, "مشاركة")) }
+
+    private fun toFranco(s: String): String { return dictionary[s.trim()] ?: s.map { arabicMap[it] ?: it.toString() }.joinToString("") }
+    private fun toArabic(s: String): String { val rev = dictionary.entries.associate { it.value.lowercase() to it.key }; return rev[s.trim().lowercase()] ?: s }
+
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
         super.onActivityResult(requestCode, resultCode, data)
         if (resultCode != RESULT_OK) return
-        when (requestCode) {
-            REQ_VOICE -> { val spoken = data?.getStringArrayListExtra(RecognizerIntent.EXTRA_RESULTS)?.firstOrNull(); if (!spoken.isNullOrBlank()) { showTranslator(); sourceText?.setText(spoken) } }
-            REQ_IMPORT -> data?.data?.let { importBackupFrom(it) }
-            REQ_CAPTURE_PHOTO -> {
-                AlertDialog.Builder(this).setTitle("📷 صورة").setMessage("ميزة OCR تتطلب مكتبة خارجية. اكتب النص يدوياً:").setPositiveButton("كتابة يدوية") { _, _ -> showTranslator(); sourceText?.setText(""); toast("اكتب النص المرئي") }.setNegativeButton("إلغاء", null).show()
-            }
-        }
+        if (requestCode == REQ_PDF && data?.data != null) generatePdf(data.data!!)
     }
-
-    override fun onNewIntent(intent: Intent) {
-        super.onNewIntent(intent); setIntent(intent)
-        when (intent.getStringExtra("screen")) { "translator" -> showTranslator(); "dictionary" -> showDictionary(); "home" -> showHome() }
-    }
-
-    override fun onStart() { super.onStart(); updateWidgetData() }
 }
