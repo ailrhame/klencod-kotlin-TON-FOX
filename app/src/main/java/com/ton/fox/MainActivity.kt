@@ -310,7 +310,7 @@ class FrancoKeyboardService : InputMethodService() {
         ): TextView {
             return TextView(this).apply {
                 text = title
-                textSize = 17f
+                this.textSize = 17f
                 gravity = Gravity.CENTER
                 typeface = Typeface.DEFAULT_BOLD
                 setTextColor(foregroundColor)
