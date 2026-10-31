@@ -18,7 +18,7 @@
 
     <application
         android:allowBackup="false"
-        android:icon="@android:drawable/ic_btn_speak_now"
+        android:icon="@drawable/ic_fox"
         android:label="TON FOX"
         android:supportsRtl="true"
         android:theme="@android:style/Theme.Material.NoActionBar">
