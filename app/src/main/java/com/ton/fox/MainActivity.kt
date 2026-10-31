@@ -987,9 +987,8 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
         }
     }
 
-    private fun importBackupFrom(uri: Uri) {}
-}
-// ===== OVERLAP with Part 1 (last ~20 lines) =====
+// (part 2 starts here)
+
 override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
     super.onActivityResult(requestCode, resultCode, data)
     if (resultCode != RESULT_OK) return
@@ -1008,27 +1007,12 @@ override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) 
 }
 
 // ===== CONTINUATION (Part 2) — REAL IMPLEMENTATIONS =====
-// User: delete Part 1's `importBackupFrom(uri) {}` stub and its closing `}`. Paste from here.
+
 
 // Extended onActivityResult with capture-photo case (replaces Part 1 version above).
 // REMOVE the block above if compiling standalone, and keep only this extended version.
 // For the protocol's sake, the extended version is provided here:
-private fun onActivityResultExtended(requestCode: Int, resultCode: Int, data: Intent?) {
-    if (resultCode != RESULT_OK) return
-    when (requestCode) {
-        REQ_CAPTURE_PHOTO -> {
-            AlertDialog.Builder(this)
-                .setTitle("📷 صورة ملتقطة")
-                .setMessage("ميزة OCR تحتاج مكتبة خارجية (ML Kit) وهي غير مضافة. اكتب النص الذي تراه في الصورة يدوياً:")
-                .setPositiveButton("كتابة يدوية") { _, _ ->
-                    showTranslator()
-                    sourceText?.setText("")
-                    toast("اكتب النص المرئي في الحقل")
-                }
-                .setNegativeButton("إلغاء", null).show()
-        }
-    }
-}
+
 
 private fun importBackupFrom(uri: Uri) {
     try {
