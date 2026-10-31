@@ -110,45 +110,33 @@ class TonFoxWidget : AppWidgetProvider() {
 // [KEYBOARD SERVICE — Real QWERTY Keyboard]
 // ============================================================
 class FrancoKeyboardService : InputMethodService() {
-    private var isFrancoMode = true
     
-    // خريطة تحويل الحروف العربية إلى فرانكو
-    private val arabicToFrancoMap = mapOf(
-        'ا' to "a", 'أ' to "a", 'إ' to "e", 'آ' to "aa", 'ب' to "b", 'ت' to "t", 'ث' to "th",
-        'ج' to "j", 'ح' to "7", 'خ' to "kh", 'د' to "d", 'ذ' to "th", 'ر' to "r", 'ز' to "z",
-        'س' to "s", 'ش' to "sh", 'ص' to "9", 'ض' to "9'", 'ط' to "6", 'ظ' to "6'", 'ع' to "3",
-        'غ' to "gh", 'ف' to "f", 'ق' to "q", 'ك' to "k", 'ل' to "l", 'م' to "m", 'ن' to "n",
-        'ه' to "h", 'ة' to "a", 'و' to "w", 'ي' to "y", 'ى' to "a", 'ء' to "2", 'ئ' to "2",
-        'ؤ' to "2", 'پ' to "p", 'چ' to "ch", 'گ' to "g"
-    )
+    private fun dp(v: Int): Int = (v * resources.displayMetrics.density).toInt()
 
     override fun onCreateInputView(): View {
         val root = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             setBackgroundColor(Color.parseColor("#0B0914"))
-            setPadding(8, 8, 8, 8)
+            setPadding(dp(4), dp(4), dp(4), dp(4))
+            // تحديد ارتفاع مناسب للكيبورد (حوالي 40% من الشاشة)
+            minimumHeight = (resources.displayMetrics.heightPixels * 0.40).toInt()
         }
 
-        // شريط الحالة (زر التبديل)
-        val toggleBtn = TextView(this).apply {
-            text = "⌨️ TON FOX: Franco Mode ON"
+        // شريط الحالة العلوي
+        val header = TextView(this).apply {
+            text = "⌨️ TON FOX: لوحة المفاتيح العربية"
             setTextColor(Color.parseColor("#FFB800"))
-            textSize = 14f
+            textSize = 12f
             gravity = Gravity.CENTER
-            setPadding(8, 16, 8, 16)
-            setOnClickListener {
-                isFrancoMode = !isFrancoMode
-                text = if (isFrancoMode) "⌨️ TON FOX: Franco Mode ON" else "⌨️ TON FOX: Arabic Mode"
-                setTextColor(if (isFrancoMode) Color.parseColor("#FFB800") else Color.WHITE)
-            }
+            setPadding(0, dp(8), 0, dp(8))
         }
-        root.addView(toggleBtn, LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT))
+        root.addView(header, LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT))
 
-        // صفوف لوحة المفاتيح (QWERTY)
+        // صفوف الحروف العربية
         val rows = listOf(
-            listOf("q", "w", "e", "r", "t", "y", "u", "i", "o", "p"),
-            listOf("a", "s", "d", "f", "g", "h", "j", "k", "l"),
-            listOf("⇧", "z", "x", "c", "v", "b", "n", "m", "⌫")
+            listOf("ض", "ص", "ث", "ق", "ف", "غ", "ع", "ه", "خ", "ح", "ج", "چ"),
+            listOf("ش", "س", "ي", "ب", "ل", "ا", "ت", "ن", "م", "ك", "ط"),
+            listOf("⇧", "ئ", "ء", "ؤ", "ر", "لا", "ى", "ة", "و", "ز", "ظ", "⌫")
         )
 
         for (row in rows) {
@@ -157,17 +145,20 @@ class FrancoKeyboardService : InputMethodService() {
                 layoutParams = LinearLayout.LayoutParams(MATCH_PARENT, 0, 1f)
             }
             for (key in row) {
+                val isSpecial = key == "⇧" || key == "⌫"
                 val btn = TextView(this).apply {
                     text = key
-                    textSize = 18f
-                    setTextColor(Color.WHITE)
+                    textSize = 20f
+                    setTextColor(if (isSpecial) Color.parseColor("#FFB800") else Color.WHITE)
                     gravity = Gravity.CENTER
-                    background = GradientDrawable().apply { setColor(Color.parseColor("#171324")); cornerRadius = 12f }
-                    isClickable = true
-                    layoutParams = LinearLayout.LayoutParams(0, MATCH_PARENT, 1f).apply { setMargins(4, 4, 4, 4) }
-                    setOnClickListener {
-                        handleKeyPress(key)
+                    background = GradientDrawable().apply { 
+                        setColor(if (isSpecial) Color.parseColor("#332B45") else Color.parseColor("#171324"))
+                        cornerRadius = dp(8).toFloat() 
                     }
+                    isClickable = true
+                    // الوزن (weight) يجعل الأزرار تتمدد لتملأ الشاشة
+                    layoutParams = LinearLayout.LayoutParams(0, MATCH_PARENT, 1f).apply { setMargins(dp(2), dp(2), dp(2), dp(2)) }
+                    setOnClickListener { handleKeyPress(key) }
                 }
                 rowLayout.addView(btn)
             }
@@ -182,23 +173,23 @@ class FrancoKeyboardService : InputMethodService() {
         
         val spaceBtn = TextView(this).apply {
             text = "مسافة"
-            textSize = 14f
+            textSize = 16f
             setTextColor(Color.WHITE)
             gravity = Gravity.CENTER
-            background = GradientDrawable().apply { setColor(Color.parseColor("#171324")); cornerRadius = 12f }
+            background = GradientDrawable().apply { setColor(Color.parseColor("#171324")); cornerRadius = dp(8).toFloat() }
             isClickable = true
-            layoutParams = LinearLayout.LayoutParams(0, MATCH_PARENT, 3f).apply { setMargins(4, 4, 4, 4) }
+            layoutParams = LinearLayout.LayoutParams(0, MATCH_PARENT, 4f).apply { setMargins(dp(2), dp(2), dp(2), dp(2)) }
             setOnClickListener { currentInputConnection?.commitText(" ", 1) }
         }
         
         val enterBtn = TextView(this).apply {
             text = "إرسال ⏎"
-            textSize = 14f
+            textSize = 16f
             setTextColor(Color.parseColor("#0B0914"))
             gravity = Gravity.CENTER
-            background = GradientDrawable().apply { setColor(Color.parseColor("#FFB800")); cornerRadius = 12f }
+            background = GradientDrawable().apply { setColor(Color.parseColor("#FFB800")); cornerRadius = dp(8).toFloat() }
             isClickable = true
-            layoutParams = LinearLayout.LayoutParams(0, MATCH_PARENT, 2f).apply { setMargins(4, 4, 4, 4) }
+            layoutParams = LinearLayout.LayoutParams(0, MATCH_PARENT, 2f).apply { setMargins(dp(2), dp(2), dp(2), dp(2)) }
             setOnClickListener { 
                 val ic = currentInputConnection ?: return@setOnClickListener
                 ic.sendKeyEvent(android.view.KeyEvent(android.view.KeyEvent.ACTION_DOWN, android.view.KeyEvent.KEYCODE_ENTER))
@@ -215,13 +206,9 @@ class FrancoKeyboardService : InputMethodService() {
     private fun handleKeyPress(key: String) {
         val ic = currentInputConnection ?: return
         when (key) {
-            "⌫" -> ic.deleteSurroundingText(1, 0) // مسح حرف
-            "⇧" -> { /* يمكن إضافة منطق Shift هنا */ }
-            else -> {
-                // إذا كان وضع الفرانكو مفعل، ويتم الضغط على حرف عربي (إذا أضفت لوحة عربية لاحقاً)
-                // نتركه يكتب الحرف الإنجليزي كما هو
-                ic.commitText(key, 1)
-            }
+            "⌫" -> ic.deleteSurroundingText(1, 0)
+            "⇧" -> { /* زر التحويل (يمكنك إضافة منطق للحروف الكبيرة إذا أردت) */ }
+            else -> ic.commitText(key, 1)
         }
     }
 }
