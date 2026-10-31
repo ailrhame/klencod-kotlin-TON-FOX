@@ -26,6 +26,7 @@ import android.util.TypedValue
 import android.view.*
 import android.view.animation.DecelerateInterpolator
 import android.view.inputmethod.InputConnection
+import android.view.inputmethod.EditorInfo
 import android.view.inputmethod.InputMethodManager
 import android.widget.*
 import org.json.JSONArray
@@ -60,6 +61,9 @@ class FrancoKeyboardService : InputMethodService() {
 
     private var isFrancoMode = true
     private var isShift = false
+    private var isNumericMode = false
+    private var isNumericFieldMode = false
+    private var isPhoneFieldMode = false
     private var prefs: SharedPreferences? = null
     private var lastCommittedText = ""
 
@@ -83,18 +87,31 @@ class FrancoKeyboardService : InputMethodService() {
         prefs = getSharedPreferences("ton_fox_data", Context.MODE_PRIVATE)
     }
 
+    override fun onStartInput(attribute: EditorInfo, restarting: Boolean) {
+        super.onStartInput(attribute, restarting)
+        val inputClass = attribute.inputType and EditorInfo.TYPE_MASK_CLASS
+        isPhoneFieldMode = inputClass == EditorInfo.TYPE_CLASS_PHONE
+        isNumericFieldMode = isPhoneFieldMode || inputClass == EditorInfo.TYPE_CLASS_NUMBER
+        isNumericMode = isNumericFieldMode
+        lastCommittedText = ""
+    }
+
+    override fun onStartInputView(info: EditorInfo, restarting: Boolean) {
+        super.onStartInputView(info, restarting)
+        // إعادة بناء الواجهة عند الانتقال بين خانة نصية وخانة رقمية/هاتف.
+        setInputView(onCreateInputView())
+    }
+
     override fun onCreateInputView(): View {
         prefs = getSharedPreferences("ton_fox_data", Context.MODE_PRIVATE)
 
         val bgType = prefs?.getString("kb_bg_type", "dark") ?: "dark"
         val root = FrameLayout(this)
 
-        // الخلفية
         when (bgType) {
             "image" -> {
                 val uriText = prefs?.getString("kb_bg_uri", null)
                 var loaded = false
-
                 if (!uriText.isNullOrBlank()) {
                     try {
                         contentResolver.openInputStream(Uri.parse(uriText))?.use { stream ->
@@ -102,7 +119,7 @@ class FrancoKeyboardService : InputMethodService() {
                             if (bitmap != null) {
                                 root.background = BitmapDrawable(resources, bitmap).apply {
                                     gravity = Gravity.FILL
-                                        }
+                                }
                                 loaded = true
                             }
                         }
@@ -110,10 +127,8 @@ class FrancoKeyboardService : InputMethodService() {
                         loaded = false
                     }
                 }
-
                 if (!loaded) root.setBackgroundColor(Color.parseColor("#0B0914"))
             }
-
             "light" -> root.setBackgroundColor(Color.parseColor("#F0F0F0"))
             else -> root.setBackgroundColor(Color.parseColor("#0B0914"))
         }
@@ -121,76 +136,67 @@ class FrancoKeyboardService : InputMethodService() {
         val spacing = prefs?.getString("kb_spacing", "normal") ?: "normal"
         val margin = when (spacing) {
             "tight" -> dp(1)
-            "wide" -> dp(5)
+            "wide" -> dp(4)
             else -> dp(2)
         }
-
         val outerPadding = when (spacing) {
             "tight" -> dp(2)
-            "wide" -> dp(7)
+            "wide" -> dp(6)
             else -> dp(4)
         }
 
-        val size = prefs?.getString("kb_size", "large") ?: "large"
-        val keyHeight = when (size) {
-            "small" -> dp(45)
-            "medium" -> dp(55)
-            "large" -> dp(65)
-            "xlarge" -> dp(75)
-            else -> dp(65)
-        }
+        // الارتفاع قيمة فعلية بالسنتيمتر، وتحويلها يعتمد على كثافة الشاشة الفيزيائية.
+        val heightCm = (prefs?.getFloat("kb_height_cm", 4.8f) ?: 4.8f).coerceIn(3.5f, 8.0f)
+        val metrics = resources.displayMetrics
+        val physicalDpi = metrics.xdpi.takeIf { it in 100f..1000f } ?: (metrics.density * 160f)
+        val requestedHeightPx = (heightCm * physicalDpi / 2.54f).toInt()
 
-        val textSize = when (size) {
-            "small" -> 17f
-            "medium" -> 20f
-            "large" -> 23f
-            "xlarge" -> 26f
-            else -> 23f
-        }
+        // خمس طبقات ثابتة: صف الأرقام + ثلاثة صفوف أحرف + شريط الوظائف.
+        val headerHeight = dp(30)
+        val rowCount = 5
+        val heightForRows = requestedHeightPx - headerHeight - (outerPadding * 2) - (margin * (rowCount + 1))
+        val keyHeight = (heightForRows / rowCount).coerceIn(dp(25), dp(90))
+        val keyHeightDp = keyHeight / metrics.density
+        val keyTextSp = (keyHeightDp * 0.49f).coerceIn(12f, 26f)
+        val specialTextSp = (keyTextSp * 0.82f).coerceAtLeast(11f)
 
-        val style = prefs?.getString("kb_style", "rounded") ?: "rounded"
-        val radius = when (style) {
-            "square" -> 0f
-            "capsule" -> keyHeight / 2f
-            else -> dp(9).toFloat()
-        }
-
+        val style = prefs?.getString("kb_style", "soft") ?: "soft"
+        val radius = if (style == "square") dp(3).toFloat() else dp(7).toFloat()
         val isLight = bgType == "light"
         val keyColor = if (isLight) Color.WHITE else Color.parseColor("#171324")
         val textColor = if (isLight) Color.parseColor("#171324") else Color.WHITE
         val specialColor = if (isLight) Color.parseColor("#E4DFEA") else Color.parseColor("#332B45")
         val gold = Color.parseColor("#FFB800")
+        val thinBorder = withAlpha(if (isLight) Color.BLACK else Color.WHITE, 0.10f)
 
         val main = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             setPadding(outerPadding, outerPadding, outerPadding, outerPadding)
+            clipChildren = false
+            clipToPadding = false
         }
+        root.addView(main, FrameLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT))
 
-        root.addView(
-            main,
-            FrameLayout.LayoutParams(MATCH_PARENT, MATCH_PARENT)
-        )
-
-        // شريط التبديل
         val header = TextView(this).apply {
-            text = if (isFrancoMode) {
-                "⌨ TON FOX  |  عربي ⇢ فرانكو"
-            } else {
-                "⌨ TON FOX  |  English"
+            text = when {
+                isNumericMode && isPhoneFieldMode -> "TON FOX  •  لوحة الهاتف"
+                isNumericMode -> "TON FOX  •  لوحة الأرقام"
+                isFrancoMode -> "TON FOX  •  عربي ⇢ فرانكو"
+                else -> "TON FOX  •  English QWERTY"
             }
-
-            this.textSize = 14f
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f)
             typeface = Typeface.DEFAULT_BOLD
             gravity = Gravity.CENTER
             setTextColor(gold)
-            setPadding(dp(8), dp(9), dp(8), dp(9))
-
+            includeFontPadding = false
+            setPadding(dp(5), 0, dp(5), 0)
             background = GradientDrawable().apply {
                 setColor(if (isLight) Color.WHITE else Color.parseColor("#CC171324"))
-                cornerRadius = dp(10).toFloat()
-                setStroke(dp(1), withAlpha(gold, 0.6f))
+                cornerRadius = dp(7).toFloat()
             }
-
+            layoutParams = LinearLayout.LayoutParams(MATCH_PARENT, headerHeight).apply {
+                bottomMargin = margin
+            }
             setOnClickListener {
                 isFrancoMode = !isFrancoMode
                 isShift = false
@@ -198,114 +204,77 @@ class FrancoKeyboardService : InputMethodService() {
                 setInputView(onCreateInputView())
             }
         }
+        main.addView(header)
 
-        main.addView(
-            header,
-            LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT).apply {
-                bottomMargin = dp(5)
-            }
-        )
-
-        // ترتيب عربي قريب من لوحة مفاتيح الهاتف القياسية، من اليمين إلى اليسار.
         val arabicRows = listOf(
             listOf("ض", "ص", "ث", "ق", "ف", "غ", "ع", "ه", "خ", "ح", "ج", "د"),
-            listOf("ش", "س", "ي", "ب", "ل", "ا", "ت", "ن", "م", "ك", "ط"),
+            listOf("ش", "س", "ي", "ب", "ل", "ا", "ت", "ن", "م", "ك", "ط", "ذ"),
             listOf("⇧", "ئ", "ء", "ؤ", "ر", "لا", "ى", "ة", "و", "ز", "ظ", "⌫")
         )
-
         val englishRows = listOf(
             listOf("q", "w", "e", "r", "t", "y", "u", "i", "o", "p"),
             listOf("a", "s", "d", "f", "g", "h", "j", "k", "l"),
             listOf("⇧", "z", "x", "c", "v", "b", "n", "m", "⌫")
         )
 
-        val rows = if (isFrancoMode) arabicRows else englishRows
-
-        fun createKey(key: String): TextView {
+        fun createKey(key: String, keyWeight: Float = 1f): TextView {
             val special = key == "⇧" || key == "⌫"
+            val shownText = if (!isFrancoMode && isShift && key.length == 1) {
+                key.uppercase(Locale.ROOT)
+            } else key
 
             return TextView(this).apply {
-                text = if (!isFrancoMode && isShift && key.length == 1) {
-                    key.uppercase(Locale.ROOT)
-                } else key
-
-                this.textSize = if (special) this.textSize - 2f else this.textSize
+                text = shownText
+                val fittedKeyTextSp = if (!special && key.length > 1) keyTextSp * 0.78f else keyTextSp
+                setTextSize(TypedValue.COMPLEX_UNIT_SP, if (special) specialTextSp else fittedKeyTextSp)
                 gravity = Gravity.CENTER
+                includeFontPadding = false
+                maxLines = 1
+                isSingleLine = true
+                setPadding(dp(1), 0, dp(1), 0)
                 setTextColor(if (special) gold else textColor)
-                typeface = Typeface.DEFAULT_BOLD
-
+                typeface = if (special) Typeface.DEFAULT else Typeface.create("sans-serif-medium", Typeface.NORMAL)
                 background = GradientDrawable().apply {
                     setColor(if (special) specialColor else keyColor)
                     cornerRadius = radius
-                    setStroke(dp(1), withAlpha(gold, 65f / 255f))
+                    setStroke(dp(1), thinBorder)
                 }
-
                 isClickable = true
                 isFocusable = true
-                layoutParams = LinearLayout.LayoutParams(
-                    0,
-                    MATCH_PARENT,
-                    1f
-                ).apply {
+                layoutParams = LinearLayout.LayoutParams(0, MATCH_PARENT, keyWeight).apply {
                     setMargins(margin, 0, margin, 0)
                 }
-
-                setOnClickListener {
-                    handleKeyPress(key)
-                }
+                setOnClickListener { handleKeyPress(key) }
             }
         }
 
-        // كل صف يستخدم 12 وحدة حتى تبقى المفاتيح متناسقة
-        rows.forEach { row ->
+        fun addKeyRow(keys: List<String>, units: Int = 12, rtl: Boolean = isFrancoMode) {
             val rowLayout = LinearLayout(this).apply {
                 orientation = LinearLayout.HORIZONTAL
                 gravity = Gravity.CENTER
-                // العربية تبدأ من اليمين مثل كيبورد الهاتف، والإنجليزية من اليسار.
-                layoutDirection = if (isFrancoMode) {
-                    View.LAYOUT_DIRECTION_RTL
-                } else {
-                    View.LAYOUT_DIRECTION_LTR
-                }
-                layoutParams = LinearLayout.LayoutParams(
-                    MATCH_PARENT,
-                    keyHeight
-                ).apply {
+                layoutDirection = if (rtl) View.LAYOUT_DIRECTION_RTL else View.LAYOUT_DIRECTION_LTR
+                clipChildren = false
+                layoutParams = LinearLayout.LayoutParams(MATCH_PARENT, keyHeight).apply {
                     bottomMargin = margin
                 }
             }
-
-            val emptyUnits = (12 - row.size).coerceAtLeast(0)
-            val sideWeight = emptyUnits / 2f
-
+            val hasControlKeys = keys.any { it == "⇧" || it == "⌫" }
+            val keyWeights = keys.map { key ->
+                when (key) {
+                    "⇧", "⌫" -> 1.5f
+                    else -> if (hasControlKeys) 0.9f else 1f
+                }
+            }
+            val occupiedUnits = keyWeights.sum()
+            val sideWeight = ((units - occupiedUnits).coerceAtLeast(0f)) / 2f
             if (sideWeight > 0f) {
-                rowLayout.addView(
-                    View(this),
-                    LinearLayout.LayoutParams(0, 1, sideWeight)
-                )
+                rowLayout.addView(View(this), LinearLayout.LayoutParams(0, 1, sideWeight))
             }
-
-            row.forEach { key ->
-                rowLayout.addView(createKey(key))
-            }
-
+            keys.forEachIndexed { index, key -> rowLayout.addView(createKey(key, keyWeights[index])) }
             if (sideWeight > 0f) {
-                rowLayout.addView(
-                    View(this),
-                    LinearLayout.LayoutParams(0, 1, sideWeight)
-                )
+                rowLayout.addView(View(this), LinearLayout.LayoutParams(0, 1, sideWeight))
             }
-
             main.addView(rowLayout)
-        }
-
-        // الصف السفلي
-        val bottom = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            layoutParams = LinearLayout.LayoutParams(
-                MATCH_PARENT,
-                keyHeight
-            )
         }
 
         fun bottomKey(
@@ -317,64 +286,81 @@ class FrancoKeyboardService : InputMethodService() {
         ): TextView {
             return TextView(this).apply {
                 text = title
-                this.textSize = 17f
+                setTextSize(TypedValue.COMPLEX_UNIT_SP, if (title == "مسافة") minOf(15f, keyTextSp) else minOf(14f, keyTextSp))
                 gravity = Gravity.CENTER
+                includeFontPadding = false
+                maxLines = 1
+                isSingleLine = true
+                setPadding(dp(2), 0, dp(2), 0)
                 typeface = Typeface.DEFAULT_BOLD
                 setTextColor(foregroundColor)
-
                 background = GradientDrawable().apply {
                     setColor(backgroundColor)
                     cornerRadius = radius
-                    setStroke(dp(1), withAlpha(gold, 0.5f))
+                    setStroke(dp(1), thinBorder)
                 }
-
-                layoutParams = LinearLayout.LayoutParams(
-                    0,
-                    MATCH_PARENT,
-                    weight
-                ).apply {
+                layoutParams = LinearLayout.LayoutParams(0, MATCH_PARENT, weight).apply {
                     setMargins(margin, 0, margin, 0)
                 }
-
                 setOnClickListener { action() }
             }
         }
 
-        bottom.addView(
-            bottomKey("123", 1f, specialColor, gold) {
-                // مساحة مخصصة لإضافة لوحة الأرقام لاحقاً
-                toastKeyboard("لوحة الأرقام قيد الإضافة")
+        if (isNumericMode) {
+            // لوحة 3×4 حقيقية؛ الهاتف يعرض * و#، والأرقام العادية تعرض - و.
+            val numericRows = if (isPhoneFieldMode) {
+                listOf(listOf("1", "2", "3"), listOf("4", "5", "6"), listOf("7", "8", "9"), listOf("*", "0", "#"))
+            } else {
+                listOf(listOf("1", "2", "3"), listOf("4", "5", "6"), listOf("7", "8", "9"), listOf("-", "0", "."))
             }
-        )
+            numericRows.forEach { addKeyRow(it, 4, rtl = false) }
 
-        bottom.addView(
-            bottomKey("مسافة", 4f, keyColor, textColor) {
-                commitKeyboardText(" ")
+            val bottom = LinearLayout(this).apply {
+                orientation = LinearLayout.HORIZONTAL
+                layoutDirection = View.LAYOUT_DIRECTION_LTR
+                gravity = Gravity.CENTER
+                layoutParams = LinearLayout.LayoutParams(MATCH_PARENT, keyHeight)
             }
-        )
+            bottom.addView(bottomKey("ABC", 1.35f, specialColor, gold) {
+                isNumericMode = false
+                setInputView(onCreateInputView())
+            })
+            bottom.addView(bottomKey("⌫", 1.25f, specialColor, gold) { handleKeyPress("⌫") })
+            bottom.addView(bottomKey("إرسال", 1.7f, gold, Color.BLACK) { sendKeyboardEnter() })
+            main.addView(bottom)
+        } else {
+            // صف الأرقام يبقى ظاهراً دائماً حتى لا يضطر المستخدم لفتح طبقة أخرى.
+            addKeyRow((1..9).map { it.toString() } + "0", 12)
+            val letterRows = if (isFrancoMode) arabicRows else englishRows
+            letterRows.forEach { addKeyRow(it, 12) }
 
-        bottom.addView(
-            bottomKey("إرسال ⏎", 2f, gold, Color.BLACK) {
-                val ic = currentInputConnection ?: return@bottomKey
-                ic.sendKeyEvent(
-                    android.view.KeyEvent(
-                        android.view.KeyEvent.ACTION_DOWN,
-                        android.view.KeyEvent.KEYCODE_ENTER
-                    )
-                )
-                ic.sendKeyEvent(
-                    android.view.KeyEvent(
-                        android.view.KeyEvent.ACTION_UP,
-                        android.view.KeyEvent.KEYCODE_ENTER
-                    )
-                )
-                lastCommittedText = ""
+            val bottom = LinearLayout(this).apply {
+                orientation = LinearLayout.HORIZONTAL
+                layoutDirection = View.LAYOUT_DIRECTION_LTR
+                gravity = Gravity.CENTER
+                layoutParams = LinearLayout.LayoutParams(MATCH_PARENT, keyHeight)
             }
-        )
+            bottom.addView(bottomKey("?123", 1.35f, specialColor, gold) {
+                isNumericMode = true
+                setInputView(onCreateInputView())
+            })
+            bottom.addView(bottomKey("،", 0.9f, specialColor, textColor) { commitKeyboardText(",") })
+            bottom.addView(bottomKey("مسافة", 3.7f, keyColor, textColor) { commitKeyboardText(" ") })
+            bottom.addView(bottomKey(".", 0.9f, specialColor, textColor) { commitKeyboardText(".") })
+            bottom.addView(bottomKey("إرسال", 1.7f, gold, Color.BLACK) { sendKeyboardEnter() })
+            main.addView(bottom)
+        }
 
-        main.addView(bottom)
-
+        root.minimumHeight = requestedHeightPx
+        root.setPadding(0, 0, 0, 0)
         return root
+    }
+
+    private fun sendKeyboardEnter() {
+        val ic = currentInputConnection ?: return
+        ic.sendKeyEvent(android.view.KeyEvent(android.view.KeyEvent.ACTION_DOWN, android.view.KeyEvent.KEYCODE_ENTER))
+        ic.sendKeyEvent(android.view.KeyEvent(android.view.KeyEvent.ACTION_UP, android.view.KeyEvent.KEYCODE_ENTER))
+        lastCommittedText = ""
     }
 
     private fun commitKeyboardText(value: String) {
@@ -395,21 +381,25 @@ class FrancoKeyboardService : InputMethodService() {
                 }
                 lastCommittedText = ""
             }
-
             "⇧" -> {
                 isShift = !isShift
                 setInputView(onCreateInputView())
             }
-
+            "?123" -> {
+                isNumericMode = true
+                setInputView(onCreateInputView())
+            }
+            "ABC" -> {
+                isNumericMode = false
+                setInputView(onCreateInputView())
+            }
             else -> {
                 val output = if (isFrancoMode) {
                     arabicToFranco[key] ?: key
                 } else {
                     if (isShift) key.uppercase(Locale.ROOT) else key
                 }
-
                 commitKeyboardText(output)
-
                 if (!isFrancoMode && isShift) {
                     isShift = false
                     setInputView(onCreateInputView())
@@ -1239,16 +1229,88 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
     addCard {
         addView(label("🎨 إعدادات مظهر الكيبورد", 18f, colorGold, true))
         
-        // 1. الطول (حجم الأزرار)
-        addView(label("حجم الأزرار (الطول):", 14f, colorMuted))
-        val sizeRow = LinearLayout(this@MainActivity).apply { orientation = LinearLayout.HORIZONTAL; setPadding(0, dp(4), 0, dp(12)) }
-        val currentSize = prefs.getString("kb_size", "large") ?: "large"
-        listOf("small" to "صغير", "medium" to "متوسط", "large" to "كبير", "xlarge" to "ضخم").forEach { (id, name) ->
-            sizeRow.addView(button(if (currentSize == id) "✓ $name" else name) {
-                saveSetting("kb_size", id); toast("تم تغيير حجم الكيبورد")
-            }, LinearLayout.LayoutParams(0, WRAP_CONTENT, 1f).apply { marginEnd = dp(2) })
+        // تحكم حر بارتفاع لوحة المفاتيح بالسنتيمتر، مع منزلق وقيمة رقمية دقيقة.
+        addView(label("ارتفاع الكيبورد بالسنتيمتر", 15f, colorMuted, true))
+        addView(label("اكتب القياس بنفسك أو حرّك المؤشر. كل 0.1 سم يغيّر الارتفاع تدريجياً. قد يختلف القياس الفعلي قليلاً حسب معايرة شاشة الهاتف.", 12f, colorMuted))
+        val minKeyboardCm = 3.5f
+        val maxKeyboardCm = 8.0f
+        var selectedKeyboardCm = (prefs.getFloat("kb_height_cm", 4.8f)).coerceIn(minKeyboardCm, maxKeyboardCm)
+        val heightLabel = label("الارتفاع الحالي: %.1f سم".format(Locale.US, selectedKeyboardCm), 16f, colorGold, true)
+        addView(heightLabel)
+
+        val heightSeek = SeekBar(this@MainActivity).apply {
+            max = 45
+            progress = ((selectedKeyboardCm - minKeyboardCm) * 10f).toInt().coerceIn(0, max)
         }
-        addView(sizeRow)
+        addView(heightSeek, LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT))
+
+        val heightInputRow = LinearLayout(this@MainActivity).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+        }
+        val heightInput = EditText(this@MainActivity).apply {
+            inputType = android.text.InputType.TYPE_CLASS_NUMBER or android.text.InputType.TYPE_NUMBER_FLAG_DECIMAL
+            setSingleLine(true)
+            setText("%.1f".format(Locale.US, selectedKeyboardCm))
+            setTextColor(colorText)
+            setHintTextColor(colorMuted)
+            hint = "مثلاً 5.4"
+            textSize = 16f
+            gravity = Gravity.CENTER
+            background = shape(colorBg, 8, colorBorder)
+            setPadding(dp(8), dp(8), dp(8), dp(8))
+            layoutParams = LinearLayout.LayoutParams(0, dp(48), 1f)
+        }
+        heightInputRow.addView(heightInput)
+        heightInputRow.addView(label("سم", 14f, colorMuted).apply {
+            setPadding(dp(8), 0, dp(8), 0)
+        })
+        addView(heightInputRow)
+
+        fun updateKeyboardHeight(value: Float, updateInput: Boolean = true) {
+            selectedKeyboardCm = value.coerceIn(minKeyboardCm, maxKeyboardCm)
+            saveSetting("kb_height_cm", selectedKeyboardCm)
+            heightLabel.text = "الارتفاع الحالي: %.1f سم".format(Locale.US, selectedKeyboardCm)
+            heightSeek.progress = ((selectedKeyboardCm - minKeyboardCm) * 10f).toInt().coerceIn(0, heightSeek.max)
+            if (updateInput) heightInput.setText("%.1f".format(Locale.US, selectedKeyboardCm))
+        }
+
+        heightSeek.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
+            override fun onProgressChanged(seekBar: SeekBar?, progress: Int, fromUser: Boolean) {
+                selectedKeyboardCm = minKeyboardCm + (progress / 10f)
+                heightLabel.text = "الارتفاع الحالي: %.1f سم".format(Locale.US, selectedKeyboardCm)
+                heightInput.setText("%.1f".format(Locale.US, selectedKeyboardCm))
+            }
+            override fun onStartTrackingTouch(seekBar: SeekBar?) = Unit
+            override fun onStopTrackingTouch(seekBar: SeekBar?) {
+                updateKeyboardHeight(selectedKeyboardCm)
+                toast("تم حفظ ارتفاع الكيبورد. أعد فتحه لتطبيق القياس.")
+            }
+        })
+
+        val heightActions = LinearLayout(this@MainActivity).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER
+        }
+        heightActions.addView(button("− 0.1 سم") {
+            updateKeyboardHeight(selectedKeyboardCm - 0.1f)
+            toast("تم حفظ القياس")
+        }, LinearLayout.LayoutParams(0, WRAP_CONTENT, 1f).apply { marginEnd = dp(4) })
+        heightActions.addView(button("+ 0.1 سم") {
+            updateKeyboardHeight(selectedKeyboardCm + 0.1f)
+            toast("تم حفظ القياس")
+        }, LinearLayout.LayoutParams(0, WRAP_CONTENT, 1f).apply { marginEnd = dp(4) })
+        heightActions.addView(button("تطبيق القياس", true) {
+            val parsed = heightInput.text.toString().trim().replace(',', '.').toFloatOrNull()
+            if (parsed == null) {
+                toast("أدخل رقماً صالحاً مثل 5.4")
+            } else {
+                updateKeyboardHeight(parsed)
+                toast("تم حفظ الارتفاع بالسنتيمتر. أعد فتح الكيبورد.")
+            }
+        }, LinearLayout.LayoutParams(0, WRAP_CONTENT, 1.2f))
+        addView(heightActions)
+        gap(this, 10)
 
         // 2. المسافات بين الأزرار
         addView(label("المسافات بين الأزرار:", 14f, colorMuted))
@@ -1262,17 +1324,20 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
         addView(spacingRow)
 
         // 3. شكل الأزرار
-        addView(label("شكل الأزرار:", 14f, colorMuted))
+        addView(label("شكل المفاتيح (بدون كبسولات):", 14f, colorMuted))
         val styleRow = LinearLayout(this@MainActivity).apply { orientation = LinearLayout.HORIZONTAL; setPadding(0, dp(4), 0, dp(12)) }
-        val currentStyle = prefs.getString("kb_style", "rounded") ?: "rounded"
-        listOf("square" to "مربع", "rounded" to "دائري", "capsule" to "كبسولة").forEach { (id, name) ->
+        val savedStyle = prefs.getString("kb_style", "soft") ?: "soft"
+        val currentStyle = if (savedStyle == "square") "square" else "soft"
+        listOf("square" to "مربع ناعم", "soft" to "زوايا خفيفة").forEach { (id, name) ->
             styleRow.addView(button(if (currentStyle == id) "✓ $name" else name) {
                 saveSetting("kb_style", id); toast("تم تغيير شكل الكيبورد")
             }, LinearLayout.LayoutParams(0, WRAP_CONTENT, 1f).apply { marginEnd = dp(4) })
         }
         addView(styleRow)
 
-        // 4. الخلفية
+        addView(label("الأرقام تظهر دائماً فوق الحروف، وحقول الهاتف والرقم تفتح لوحة أرقام تلقائياً.", 12f, colorMuted))
+
+        // الخلفية
         addView(label("خلفية الكيبورد:", 14f, colorMuted))
         val bgRow = LinearLayout(this@MainActivity).apply { orientation = LinearLayout.HORIZONTAL; setPadding(0, dp(4), 0, dp(4)) }
         val currentBg = prefs.getString("kb_bg_type", "dark") ?: "dark"
