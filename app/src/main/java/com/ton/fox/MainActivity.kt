@@ -55,192 +55,364 @@ data class FlashcardState(val word: String, val intervalDays: Int = 0, val easeF
 // ============================================================
 // [KEYBOARD SERVICE — Customizable Size & Spacing]
 // ============================================================
+
 class FrancoKeyboardService : InputMethodService() {
-    private var isFrancoMode = true 
+
+    private var isFrancoMode = true
+    private var isShift = false
     private var prefs: SharedPreferences? = null
+    private var lastCommittedText = ""
 
     private val arabicToFranco = mapOf(
-        "ض" to "9'", "ص" to "9", "ث" to "th", "ق" to "q", "ف" to "f",
-        "غ" to "gh", "ع" to "3", "ه" to "h", "خ" to "kh", "ح" to "7",
-        "ج" to "j", "چ" to "ch", "ش" to "sh", "س" to "s", "ي" to "y",
-        "ب" to "b", "ل" to "l", "ا" to "a", "ت" to "t", "ن" to "n",
-        "م" to "m", "ك" to "k", "ط" to "6", "ئ" to "2", "ء" to "2",
-        "ؤ" to "2", "ر" to "r", "لا" to "la", "ى" to "a", "ة" to "a",
-        "و" to "w", "ز" to "z", "ظ" to "6'"
+        "ض" to "9'", "ص" to "9", "ث" to "th", "ق" to "q",
+        "ف" to "f", "غ" to "gh", "ع" to "3", "ه" to "h",
+        "خ" to "kh", "ح" to "7", "ج" to "j", "چ" to "ch",
+        "ش" to "sh", "س" to "s", "ي" to "y", "ب" to "b",
+        "ل" to "l", "ا" to "a", "ت" to "t", "ن" to "n",
+        "م" to "m", "ك" to "k", "ط" to "6", "ئ" to "2",
+        "ء" to "2", "ؤ" to "2", "ر" to "r", "لا" to "la",
+        "ى" to "a", "ة" to "a", "و" to "w", "ز" to "z",
+        "ظ" to "6'"
     )
 
-    private fun dp(v: Int): Int = (v * resources.displayMetrics.density).toInt()
+    private fun dp(v: Int): Int =
+        (v * resources.displayMetrics.density).toInt()
+
+    override fun onCreate() {
+        super.onCreate()
+        prefs = getSharedPreferences("ton_fox_data", Context.MODE_PRIVATE)
+    }
 
     override fun onCreateInputView(): View {
         prefs = getSharedPreferences("ton_fox_data", Context.MODE_PRIVATE)
-        
-        val root = FrameLayout(this)
+
         val bgType = prefs?.getString("kb_bg_type", "dark") ?: "dark"
-        
-        if (bgType == "image") {
-            val uriString = prefs?.getString("kb_bg_uri", null)
-            if (uriString != null) {
-                try {
-                    val uri = Uri.parse(uriString)
-                    val inputStream: InputStream = contentResolver.openInputStream(uri)!!
-                    val bitmap = BitmapFactory.decodeStream(inputStream)
-                    root.background = BitmapDrawable(resources, bitmap)
-                } catch (e: Exception) {
-                    root.setBackgroundColor(Color.parseColor("#0B0914"))
+        val root = FrameLayout(this)
+
+        // الخلفية
+        when (bgType) {
+            "image" -> {
+                val uriText = prefs?.getString("kb_bg_uri", null)
+                var loaded = false
+
+                if (!uriText.isNullOrBlank()) {
+                    try {
+                        contentResolver.openInputStream(Uri.parse(uriText))?.use { stream ->
+                            val bitmap = BitmapFactory.decodeStream(stream)
+                            if (bitmap != null) {
+                                root.background = BitmapDrawable(resources, bitmap).apply {
+                                    gravity = Gravity.FILL
+                                        }
+                                loaded = true
+                            }
+                        }
+                    } catch (_: Exception) {
+                        loaded = false
+                    }
                 }
+
+                if (!loaded) root.setBackgroundColor(Color.parseColor("#0B0914"))
             }
-        } else if (bgType == "light") {
-            root.setBackgroundColor(Color.parseColor("#F0F0F0"))
-        } else {
-            root.setBackgroundColor(Color.parseColor("#0B0914"))
+
+            "light" -> root.setBackgroundColor(Color.parseColor("#F0F0F0"))
+            else -> root.setBackgroundColor(Color.parseColor("#0B0914"))
         }
 
-        // تحديد المسافات (Margins & Padding)
-        val kbSpacing = prefs?.getString("kb_spacing", "normal") ?: "normal"
-        val keyMargin = when(kbSpacing) {
+        val spacing = prefs?.getString("kb_spacing", "normal") ?: "normal"
+        val margin = when (spacing) {
             "tight" -> dp(1)
-            "wide" -> dp(6)
-            else -> dp(3) // normal
+            "wide" -> dp(5)
+            else -> dp(2)
         }
-        val outerPadding = when(kbSpacing) {
+
+        val outerPadding = when (spacing) {
             "tight" -> dp(2)
-            "wide" -> dp(8)
+            "wide" -> dp(7)
             else -> dp(4)
         }
 
-        val mainLayout = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            setPadding(outerPadding, outerPadding, outerPadding, outerPadding)
-        }
-        root.addView(mainLayout, FrameLayout.LayoutParams(MATCH_PARENT, MATCH_PARENT))
-
-        // تحديد الطول (Height)
-        val kbSize = prefs?.getString("kb_size", "large") ?: "large"
-        val keyHeight = when(kbSize) {
+        val size = prefs?.getString("kb_size", "large") ?: "large"
+        val keyHeight = when (size) {
             "small" -> dp(45)
-            "medium" -> dp(60)
-            "large" -> dp(75)
-            else -> dp(90) // Extra Large
+            "medium" -> dp(55)
+            "large" -> dp(65)
+            "xlarge" -> dp(75)
+            else -> dp(65)
         }
 
-        val kbStyle = prefs?.getString("kb_style", "rounded") ?: "rounded"
-        val keyRadius = when(kbStyle) {
+        val textSize = when (size) {
+            "small" -> 17f
+            "medium" -> 20f
+            "large" -> 23f
+            "xlarge" -> 26f
+            else -> 23f
+        }
+
+        val style = prefs?.getString("kb_style", "rounded") ?: "rounded"
+        val radius = when (style) {
             "square" -> 0f
-            "capsule" -> keyHeight.toFloat() / 2f
-            else -> dp(8).toFloat()
+            "capsule" -> keyHeight / 2f
+            else -> dp(9).toFloat()
         }
 
         val isLight = bgType == "light"
-        val keyColor = if (isLight) Color.parseColor("#FFFFFF") else Color.parseColor("#171324")
-        val keyTextColor = if (isLight) Color.parseColor("#0B0914") else Color.WHITE
+        val keyColor = if (isLight) Color.WHITE else Color.parseColor("#171324")
+        val textColor = if (isLight) Color.parseColor("#171324") else Color.WHITE
+        val specialColor = if (isLight) Color.parseColor("#E4DFEA") else Color.parseColor("#332B45")
+        val gold = Color.parseColor("#FFB800")
 
+        val main = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(outerPadding, outerPadding, outerPadding, outerPadding)
+        }
+
+        root.addView(
+            main,
+            FrameLayout.LayoutParams(MATCH_PARENT, MATCH_PARENT)
+        )
+
+        // شريط التبديل
         val header = TextView(this).apply {
-            text = if (isFrancoMode) "⌨️ TON FOX: عربي ➔ فرانكو" else "⌨️ TON FOX: English"
-            setTextColor(Color.parseColor("#FFB800"))
+            text = if (isFrancoMode) {
+                "⌨ TON FOX  |  عربي ⇢ فرانكو"
+            } else {
+                "⌨ TON FOX  |  English"
+            }
+
             textSize = 14f
+            typeface = Typeface.DEFAULT_BOLD
             gravity = Gravity.CENTER
-            setPadding(0, dp(6), 0, dp(6))
-            background = GradientDrawable().apply { setColor(Color.parseColor("#80000000")); cornerRadius = dp(8).toFloat() }
+            setTextColor(gold)
+            setPadding(dp(8), dp(9), dp(8), dp(9))
+
+            background = GradientDrawable().apply {
+                setColor(if (isLight) Color.WHITE else Color.parseColor("#CC171324"))
+                cornerRadius = dp(10).toFloat()
+                setStroke(dp(1), withAlpha(gold, 0.6f))
+            }
+
             setOnClickListener {
                 isFrancoMode = !isFrancoMode
+                isShift = false
+                lastCommittedText = ""
                 setInputView(onCreateInputView())
             }
         }
-        mainLayout.addView(header, LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT).apply { bottomMargin = keyMargin })
 
-        // توزيع الحروف بشكل متناسق (11 حرف في الصف الأول والثاني، 12 في الثالث)
-        val rows = if (isFrancoMode) {
-            listOf(
-                listOf("ض", "ص", "ث", "ق", "ف", "غ", "ع", "ه", "خ", "ح", "ج"),
-                listOf("ش", "س", "ي", "ب", "ل", "ا", "ت", "ن", "م", "ك", "ط", "چ"),
-                listOf("⇧", "ئ", "ء", "ؤ", "ر", "لا", "ى", "ة", "و", "ز", "ظ", "⌫")
-            )
-        } else {
-            listOf(
-                listOf("q", "w", "e", "r", "t", "y", "u", "i", "o", "p"),
-                listOf("a", "s", "d", "f", "g", "h", "j", "k", "l", "z"),
-                listOf("⇧", "x", "c", "v", "b", "n", "m", "⌫")
-            )
+        main.addView(
+            header,
+            LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT).apply {
+                bottomMargin = dp(5)
+            }
+        )
+
+        val arabicRows = listOf(
+            listOf("ض", "ص", "ث", "ق", "ف", "غ", "ع", "ه", "خ", "ح", "ج"),
+            listOf("ش", "س", "ي", "ب", "ل", "ا", "ت", "ن", "م", "ك", "ط", "چ"),
+            listOf("⇧", "ئ", "ء", "ؤ", "ر", "لا", "ى", "ة", "و", "ز", "ظ", "⌫")
+        )
+
+        val englishRows = listOf(
+            listOf("q", "w", "e", "r", "t", "y", "u", "i", "o", "p"),
+            listOf("a", "s", "d", "f", "g", "h", "j", "k", "l"),
+            listOf("⇧", "z", "x", "c", "v", "b", "n", "m", "⌫")
+        )
+
+        val rows = if (isFrancoMode) arabicRows else englishRows
+
+        fun createKey(key: String): TextView {
+            val special = key == "⇧" || key == "⌫"
+
+            return TextView(this).apply {
+                text = if (!isFrancoMode && isShift && key.length == 1) {
+                    key.uppercase(Locale.ROOT)
+                } else key
+
+                textSize = if (special) textSize - 2f else textSize
+                gravity = Gravity.CENTER
+                setTextColor(if (special) gold else textColor)
+                typeface = Typeface.DEFAULT_BOLD
+
+                background = GradientDrawable().apply {
+                    setColor(if (special) specialColor else keyColor)
+                    cornerRadius = radius
+                    setStroke(dp(1), withAlpha(gold, 65f / 255f))
+                }
+
+                isClickable = true
+                isFocusable = true
+                layoutParams = LinearLayout.LayoutParams(
+                    0,
+                    MATCH_PARENT,
+                    1f
+                ).apply {
+                    setMargins(margin, 0, margin, 0)
+                }
+
+                setOnClickListener {
+                    handleKeyPress(key)
+                }
+            }
         }
 
-        for (row in rows) {
+        // كل صف يستخدم 12 وحدة حتى تبقى المفاتيح متناسقة
+        rows.forEach { row ->
             val rowLayout = LinearLayout(this).apply {
                 orientation = LinearLayout.HORIZONTAL
-                layoutParams = LinearLayout.LayoutParams(MATCH_PARENT, keyHeight).apply { bottomMargin = keyMargin }
-            }
-            for (key in row) {
-                val isSpecial = key == "⇧" || key == "⌫"
-                val btn = TextView(this).apply {
-                    text = key
-                    textSize = if(kbSize == "xlarge") 30f else if(kbSize == "large") 24f else 20f
-                    setTextColor(if (isSpecial) Color.parseColor("#FFB800") else keyTextColor)
-                    gravity = Gravity.CENTER
-                    background = GradientDrawable().apply { 
-                        setColor(if (isSpecial) (if (isLight) Color.parseColor("#E0E0E0") else Color.parseColor("#332B45")) else keyColor)
-                        cornerRadius = keyRadius
-                        setStroke(dp(1), Color.parseColor("#44FFB800"))
-                    }
-                    isClickable = true
-                    // تطبيق المسافات هنا
-                    layoutParams = LinearLayout.LayoutParams(0, MATCH_PARENT, 1f).apply { setMargins(keyMargin, 0, keyMargin, 0) }
-                    setOnClickListener { handleKeyPress(key) }
+                gravity = Gravity.CENTER
+                layoutParams = LinearLayout.LayoutParams(
+                    MATCH_PARENT,
+                    keyHeight
+                ).apply {
+                    bottomMargin = margin
                 }
-                rowLayout.addView(btn)
             }
-            mainLayout.addView(rowLayout)
+
+            val emptyUnits = (12 - row.size).coerceAtLeast(0)
+            val sideWeight = emptyUnits / 2f
+
+            if (sideWeight > 0f) {
+                rowLayout.addView(
+                    View(this),
+                    LinearLayout.LayoutParams(0, 1, sideWeight)
+                )
+            }
+
+            row.forEach { key ->
+                rowLayout.addView(createKey(key))
+            }
+
+            if (sideWeight > 0f) {
+                rowLayout.addView(
+                    View(this),
+                    LinearLayout.LayoutParams(0, 1, sideWeight)
+                )
+            }
+
+            main.addView(rowLayout)
         }
 
-        val bottomRow = LinearLayout(this).apply {
+        // الصف السفلي
+        val bottom = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
-            layoutParams = LinearLayout.LayoutParams(MATCH_PARENT, keyHeight)
+            layoutParams = LinearLayout.LayoutParams(
+                MATCH_PARENT,
+                keyHeight
+            )
         }
-        
-        val spaceBtn = TextView(this).apply {
-            text = "مسافة"
-            textSize = 18f
-            setTextColor(keyTextColor)
-            gravity = Gravity.CENTER
-            background = GradientDrawable().apply { setColor(keyColor); cornerRadius = keyRadius }
-            isClickable = true
-            layoutParams = LinearLayout.LayoutParams(0, MATCH_PARENT, 4f).apply { setMargins(keyMargin, 0, keyMargin, 0) }
-            setOnClickListener { currentInputConnection?.commitText(" ", 1) }
-        }
-        
-        val enterBtn = TextView(this).apply {
-            text = "إرسال ⏎"
-            textSize = 18f
-            setTextColor(Color.parseColor("#0B0914"))
-            gravity = Gravity.CENTER
-            background = GradientDrawable().apply { setColor(Color.parseColor("#FFB800")); cornerRadius = keyRadius }
-            isClickable = true
-            layoutParams = LinearLayout.LayoutParams(0, MATCH_PARENT, 2f).apply { setMargins(keyMargin, 0, keyMargin, 0) }
-            setOnClickListener { 
-                val ic = currentInputConnection ?: return@setOnClickListener
-                ic.sendKeyEvent(android.view.KeyEvent(android.view.KeyEvent.ACTION_DOWN, android.view.KeyEvent.KEYCODE_ENTER))
+
+        fun bottomKey(
+            title: String,
+            weight: Float,
+            backgroundColor: Int,
+            foregroundColor: Int,
+            action: () -> Unit
+        ): TextView {
+            return TextView(this).apply {
+                text = title
+                textSize = 17f
+                gravity = Gravity.CENTER
+                typeface = Typeface.DEFAULT_BOLD
+                setTextColor(foregroundColor)
+
+                background = GradientDrawable().apply {
+                    setColor(backgroundColor)
+                    cornerRadius = radius
+                    setStroke(dp(1), withAlpha(gold, 0.5f))
+                }
+
+                layoutParams = LinearLayout.LayoutParams(
+                    0,
+                    MATCH_PARENT,
+                    weight
+                ).apply {
+                    setMargins(margin, 0, margin, 0)
+                }
+
+                setOnClickListener { action() }
             }
         }
-        
-        bottomRow.addView(spaceBtn)
-        bottomRow.addView(enterBtn)
-        mainLayout.addView(bottomRow)
+
+        bottom.addView(
+            bottomKey("123", 1f, specialColor, gold) {
+                // مساحة مخصصة لإضافة لوحة الأرقام لاحقاً
+                toastKeyboard("لوحة الأرقام قيد الإضافة")
+            }
+        )
+
+        bottom.addView(
+            bottomKey("مسافة", 4f, keyColor, textColor) {
+                commitKeyboardText(" ")
+            }
+        )
+
+        bottom.addView(
+            bottomKey("إرسال ⏎", 2f, gold, Color.BLACK) {
+                val ic = currentInputConnection ?: return@bottomKey
+                ic.sendKeyEvent(
+                    android.view.KeyEvent(
+                        android.view.KeyEvent.ACTION_DOWN,
+                        android.view.KeyEvent.KEYCODE_ENTER
+                    )
+                )
+                ic.sendKeyEvent(
+                    android.view.KeyEvent(
+                        android.view.KeyEvent.ACTION_UP,
+                        android.view.KeyEvent.KEYCODE_ENTER
+                    )
+                )
+                lastCommittedText = ""
+            }
+        )
+
+        main.addView(bottom)
 
         return root
     }
 
+    private fun commitKeyboardText(value: String) {
+        val ic = currentInputConnection ?: return
+        ic.commitText(value, 1)
+        lastCommittedText = value
+    }
+
     private fun handleKeyPress(key: String) {
         val ic = currentInputConnection ?: return
+
         when (key) {
-            "⌫" -> ic.deleteSurroundingText(1, 0)
-            "⇧" -> { /* Shift logic */ }
-            else -> {
-                if (isFrancoMode) {
-                    val francoEquivalent = arabicToFranco[key] ?: key
-                    ic.commitText(francoEquivalent, 1)
+            "⌫" -> {
+                if (lastCommittedText.isNotEmpty()) {
+                    ic.deleteSurroundingText(lastCommittedText.length, 0)
                 } else {
-                    ic.commitText(key, 1)
+                    ic.deleteSurroundingText(1, 0)
+                }
+                lastCommittedText = ""
+            }
+
+            "⇧" -> {
+                isShift = !isShift
+                setInputView(onCreateInputView())
+            }
+
+            else -> {
+                val output = if (isFrancoMode) {
+                    arabicToFranco[key] ?: key
+                } else {
+                    if (isShift) key.uppercase(Locale.ROOT) else key
+                }
+
+                commitKeyboardText(output)
+
+                if (!isFrancoMode && isShift) {
+                    isShift = false
+                    setInputView(onCreateInputView())
                 }
             }
         }
+    }
+
+    private fun toastKeyboard(message: String) {
+        Toast.makeText(this, message, Toast.LENGTH_SHORT).show()
     }
 }
 
@@ -1142,20 +1314,29 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
         super.onActivityResult(requestCode, resultCode, data)
         if (resultCode != RESULT_OK) return
         when (requestCode) {
-            REQ_PICK_KB_BG -> {
-                data?.data?.let { uri ->
-                    try {
-                        contentResolver.takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION)
-                        saveSetting("kb_bg_uri", uri.toString())
-                        saveSetting("kb_bg_type", "image")
-                        toast("✔ تم تعيين صورة الخلفية للكيبورد")
-                    } catch (e: Exception) {
-                        toast("فشل تحميل الصورة")
-                    }
-                }
+            
+REQ_PICK_KB_BG -> {
+    data?.data?.let { uri ->
+        try {
+            try {
+                contentResolver.takePersistableUriPermission(
+                    uri,
+                    Intent.FLAG_GRANT_READ_URI_PERMISSION
+                )
+            } catch (_: Exception) {
+                // بعض مصادر الصور لا تدعم الإذن الدائم
             }
+
+            saveSetting("kb_bg_uri", uri.toString())
+            saveSetting("kb_bg_type", "image")
+
+            toast("✔ تم تعيين صورة الخلفية للكيبورد")
+        } catch (e: Exception) {
+            toast("تعذر حفظ صورة الخلفية")
         }
     }
+}
+
 
     override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, grantResults: IntArray) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults)
