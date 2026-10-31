@@ -1,10 +1,9 @@
-<?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
     <application
         android:allowBackup="true"
         android:label="TON FOX"
-        android:icon="@android:drawable/ic_menu_search"
+        android:icon="@android:drawable/ic_menu_edit"
         android:theme="@android:style/Theme.Material.NoActionBar"
         android:usesCleartextTraffic="false"
         android:supportsRtl="true">
@@ -12,7 +11,7 @@
         <activity
             android:name=".MainActivity"
             android:exported="true"
-            android:screenOrientation="portrait">
+            android:screenOrientation="unspecified">
 
             <intent-filter>
                 <action android:name="android.intent.action.MAIN"/>
