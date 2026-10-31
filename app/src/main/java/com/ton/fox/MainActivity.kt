@@ -1,16 +1,22 @@
 package com.ton.fox
 
-import android.app.*
-import android.os.*
-import android.content.*
+import android.app.Activity
+import android.app.AlertDialog
+import android.content.ClipData
+import android.content.ClipboardManager
+import android.content.Intent
+import android.os.Bundle
 import android.graphics.Color
 import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
-import android.view.*
+import android.speech.RecognizerIntent
+import android.view.Gravity
+import android.view.View
 import android.view.inputmethod.InputMethodManager
+import android.content.Context
 import android.widget.*
-import android.text.*
-import android.text.method.*
+import android.text.Editable
+import android.text.TextWatcher
 import org.json.JSONArray
 import org.json.JSONObject
 import java.text.SimpleDateFormat
@@ -29,9 +35,7 @@ class MainActivity : Activity() {
     private lateinit var content: LinearLayout
     private lateinit var prefs: android.content.SharedPreferences
 
-    private var currentPage = "home"
     private var currentDialect = "العراقية"
-
     private var sourceText: EditText? = null
     private var resultText: TextView? = null
 
@@ -39,195 +43,86 @@ class MainActivity : Activity() {
     private var level = 1
     private var streak = 0
 
-    private val history = mutableListOf<String>()
-    private val favorites = mutableListOf<String>()
+    private val history = mutableListOf<JSONObject>()
+    private val favorites = mutableListOf<JSONObject>()
     private val completedLessons = mutableSetOf<Int>()
     private val achievements = mutableSetOf<String>()
-
-    private val lessons = listOf(
-        Lesson(
-            "مقدمة في الفرانكو",
-            "تعرف على لغة الفرانكو وأسباب استخدامها.",
-            "الفرانكو هي طريقة لكتابة الكلمات العربية باستخدام الحروف اللاتينية والأرقام."
-        ),
-        Lesson(
-            "الحروف الأساسية",
-            "تعلم تحويل الحروف العربية إلى حروف لاتينية.",
-            "استخدم a و b و t و j و d و r و z و s لكتابة الأصوات العربية المقابلة."
-        ),
-        Lesson(
-            "الأرقام في الفرانكو",
-            "تعرف على الأرقام التي تمثل الحروف العربية.",
-            "2 = أ أو ء، 3 = ع، 5 = خ، 6 = ط، 7 = ح، 8 = غ، 9 = ص."
-        ),
-        Lesson(
-            "كتابة الكلمات",
-            "تعلم دمج الحروف لتكوين الكلمات.",
-            "مثال: كتاب = ketab، سلام = salam، حبيبي = 7abibi."
-        ),
-        Lesson(
-            "الجمل والمحادثات",
-            "استخدم الفرانكو في المحادثات اليومية.",
-            "مثال: كيف حالك؟ = keef 7alak."
-        ),
-        Lesson(
-            "اللهجة العراقية",
-            "تعلم مفردات عراقية شائعة.",
-            "شلونك = shlonak، شكو ماكو = shako mako، زين = zain."
-        ),
-        Lesson(
-            "الاحتراف",
-            "تعلم كتابة الجمل الطويلة وفهم اختلاف الأنماط.",
-            "احرص على ثبات طريقة كتابة الكلمات، واستخدم السياق لتجنب الالتباس."
-        )
-    )
 
     private data class Lesson(
         val title: String,
         val description: String,
-        val body: String
+        val content: List<String>,
+        val exampleArabic: String,
+        val acceptedAnswer: String
     )
 
-    private val dictionary = mapOf(
-        "مرحبا" to "mar7aba",
-        "السلام" to "alsalam",
-        "السلام عليكم" to "alsalam 3alaykom",
-        "وعليكم السلام" to "w 3alaykom alsalam",
-        "كيف" to "keef",
-        "حالك" to "7alak",
-        "كيف حالك" to "keef 7alak",
-        "شلونك" to "shlonak",
-        "شلونج" to "shlonich",
-        "شلونكم" to "shlonkom",
-        "شكو ماكو" to "shako mako",
-        "شنو" to "shنو",
-        "ليش" to "leesh",
-        "وين" to "wain",
-        "هسه" to "hassa",
-        "باچر" to "bachir",
-        "باجر" to "bacher",
-        "زين" to "zain",
-        "حبيبي" to "7abibi",
-        "حبيبتي" to "7abibti",
-        "قلبي" to "galbi",
-        "عمري" to "3omri",
-        "احبك" to "a7ebak",
-        "أحبك" to "a7ebak",
-        "اشتقتلك" to "eshta2tellak",
-        "شكرا" to "shukran",
-        "شكراً" to "shukran",
-        "عفوا" to "3afwan",
-        "نعم" to "na3am",
-        "لا" to "la",
-        "اي" to "ay",
-        "ايوا" to "aywa",
-        "مو" to "mo",
-        "ماكو" to "mako",
-        "اكو" to "ako",
-        "الله" to "allah",
-        "ان شاء الله" to "inshallah",
-        "إن شاء الله" to "inshallah",
-        "الحمد لله" to "al7amdulillah",
-        "ما شاء الله" to "mashallah",
-        "تصبح على خير" to "tesba7 3ala khair",
-        "صباح الخير" to "saba7 elkhair",
-        "مساء الخير" to "masa elkhair",
-        "انا" to "ana",
-        "أنا" to "ana",
-        "انت" to "enta",
-        "أنت" to "enta",
-        "انتي" to "enti",
-        "أنتِ" to "enti",
-        "هو" to "howa",
-        "هي" to "heya",
-        "نحن" to "ne7na",
-        "بيت" to "bait",
-        "كتاب" to "ketab",
-        "مدرسة" to "madrasa",
-        "جامعة" to "game3a",
-        "صديق" to "sadeeq",
-        "صديقي" to "sadeeqi",
-        "جميل" to "jameel",
-        "حلو" to "7elo",
-        "كبير" to "kbeer",
-        "صغير" to "s8eer",
-        "ماذا" to "mada",
-        "لماذا" to "leemada",
-        "اليوم" to "elyom",
-        "غدا" to "8adan",
-        "غداً" to "8adan",
-        "الآن" to "alan",
-        "بعد" to "ba3d",
-        "قبل" to "gabel",
-        "اريد" to "areed",
-        "أريد" to "areed",
-        "احب" to "a7eb",
-        "أحب" to "a7eb",
-        "تعال" to "ta3al",
-        "روح" to "roo7",
-        "يلا" to "yalla",
-        "خلاص" to "khalas",
-        "تمام" to "tamam",
-        "مبروك" to "mabrook",
-        "مشكلة" to "moshkela",
-        "فلوس" to "floوس",
-        "وقت" to "wa2t",
-        "شمس" to "shams",
-        "قمر" to "qamar",
-        "نور" to "noor",
-        "عراق" to "iraq",
-        "مصر" to "masr",
-        "السعودية" to "alsa3odeya",
-        "العراق" to "aliraq"
+    private val lessons = listOf(
+        Lesson("مقدمة في الفرانكو", "تعرف على طريقة كتابة العربية بالحروف اللاتينية والأرقام.",
+            listOf("الفرانكو أسلوب غير رسمي لكتابة العربية.", "تختلف كتابة بعض الكلمات من شخص لآخر.", "السياق يساعد على فهم الكلمة."),
+            "مرحبا", "mar7aba"),
+        Lesson("الحروف الأساسية", "تعلم أشهر المقابلات بين الحروف.",
+            listOf("ب = b", "ت = t", "ش = sh", "خ = kh", "ح = 7"),
+            "كتاب", "ketab"),
+        Lesson("الأرقام", "تستخدم الأرقام لتمثيل أصوات عربية معينة.",
+            listOf("2 = ء", "3 = ع", "5 = خ", "6 = ط", "7 = ح", "8 = غ أو ق حسب النمط", "9 = ص"),
+            "حبيبي", "7abibi"),
+        Lesson("تكوين الكلمات", "اجمع الحروف لتكوين كلمات واضحة.",
+            listOf("اكتب الكلمة كما تنطقها.", "حافظ على نمط ثابت.", "لا توجد كتابة موحدة لكل الكلمات."),
+            "شكرا", "shukran"),
+        Lesson("المحادثات", "تدرب على العبارات اليومية.",
+            listOf("استخدم المسافات بين الكلمات.", "يمكن اختصار بعض الكلمات في الدردشة.", "اقرأ الجملة كاملة لفهم المعنى."),
+            "كيف حالك", "keef 7alak"),
+        Lesson("اللهجة العراقية", "أمثلة من المفردات العراقية.",
+            listOf("شلونك = shlonak", "شكو ماكو = shako mako", "هسه = hassa", "زين = zain"),
+            "شلونك", "shlonak"),
+        Lesson("الاحتراف", "حسّن وضوح كتابتك وتناسقها.",
+            listOf("اختر طريقة ثابتة للأصوات.", "راجع الكلمات الملتبسة.", "لا تعتمد على التحويل الحرفي وحده."),
+            "اشتقتلك", "eshta2tellak")
     )
 
-    private val alphabet = mapOf(
-        'ا' to "a",
-        'أ' to "a",
-        'إ' to "e",
-        'آ' to "aa",
-        'ب' to "b",
-        'ت' to "t",
-        'ث' to "th",
-        'ج' to "j",
-        'ح' to "7",
-        'خ' to "5",
-        'د' to "d",
-        'ذ' to "th",
-        'ر' to "r",
-        'ز' to "z",
-        'س' to "s",
-        'ش' to "sh",
-        'ص' to "9",
-        'ض' to "9'",
-        'ط' to "6",
-        'ظ' to "6'",
-        'ع' to "3",
-        'غ' to "8",
-        'ف' to "f",
-        'ق' to "q",
-        'ك' to "k",
-        'ل' to "l",
-        'م' to "m",
-        'ن' to "n",
-        'ه' to "h",
-        'ة' to "a",
-        'و' to "w",
-        'ي' to "y",
-        'ى' to "a",
-        'ء' to "2",
-        'ئ' to "2",
-        'ؤ' to "2",
-        'پ' to "p",
-        'گ' to "g",
-        'چ' to "ch"
+    private val dictionary = linkedMapOf(
+        "مرحبا" to "mar7aba", "السلام عليكم" to "alsalam 3alaykom",
+        "وعليكم السلام" to "w 3alaykom alsalam", "كيف حالك" to "keef 7alak",
+        "شلونك" to "shlonak", "شلونج" to "shlonich", "شلونكم" to "shlonkom",
+        "شكو ماكو" to "shako mako", "شنو" to "shنو", "ليش" to "leesh",
+        "وين" to "wain", "هسه" to "hassa", "باچر" to "bachir",
+        "زين" to "zain", "حبيبي" to "7abibi", "حبيبتي" to "7abibti",
+        "قلبي" to "galbi", "عمري" to "3omri", "احبك" to "a7ebak",
+        "أحبك" to "a7ebak", "اشتقتلك" to "eshta2tellak", "شكرا" to "shukran",
+        "شكراً" to "shukran", "عفوا" to "3afwan", "نعم" to "na3am",
+        "لا" to "la", "اي" to "ay", "مو" to "mo", "ماكو" to "mako",
+        "اكو" to "ako", "الله" to "allah", "ان شاء الله" to "inshallah",
+        "الحمد لله" to "al7amdulillah", "ما شاء الله" to "mashallah",
+        "صباح الخير" to "saba7 elkhair", "مساء الخير" to "masa elkhair",
+        "انا" to "ana", "أنا" to "ana", "انت" to "enta", "أنت" to "enta",
+        "بيت" to "bait", "كتاب" to "ketab", "مدرسة" to "madrasa",
+        "جامعة" to "game3a", "صديق" to "sadeeq", "جميل" to "jameel",
+        "حلو" to "7elo", "كبير" to "kbeer", "صغير" to "s8eer",
+        "اليوم" to "elyom", "غدا" to "8adan", "الآن" to "alan",
+        "اريد" to "areed", "أريد" to "areed", "تعال" to "ta3al",
+        "روح" to "roo7", "يلا" to "yalla", "خلاص" to "khalas",
+        "تمام" to "tamam", "مبروك" to "mabrook", "مشكلة" to "moshkela",
+        "فلوس" to "floوس", "وقت" to "wa2t", "شمس" to "shams",
+        "قمر" to "qamar", "نور" to "noor", "عراق" to "iraq",
+        "مصر" to "masr", "السعودية" to "alsa3odeya"
+    )
+
+    private val arabicMap = mapOf(
+        'ا' to "a", 'أ' to "a", 'إ' to "e", 'آ' to "aa",
+        'ب' to "b", 'ت' to "t", 'ث' to "th", 'ج' to "j",
+        'ح' to "7", 'خ' to "kh", 'د' to "d", 'ذ' to "th",
+        'ر' to "r", 'ز' to "z", 'س' to "s", 'ش' to "sh",
+        'ص' to "9", 'ض' to "9'", 'ط' to "6", 'ظ' to "6'",
+        'ع' to "3", 'غ' to "gh", 'ف' to "f", 'ق' to "q",
+        'ك' to "k", 'ل' to "l", 'م' to "m", 'ن' to "n",
+        'ه' to "h", 'ة' to "a", 'و' to "w", 'ي' to "y",
+        'ى' to "a", 'ء' to "2", 'ئ' to "2", 'ؤ' to "2",
+        'پ' to "p", 'چ' to "ch", 'گ' to "g"
     )
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-
         prefs = getSharedPreferences("ton_fox_data", MODE_PRIVATE)
-
         loadData()
         buildMainLayout()
         showHome()
@@ -237,115 +132,74 @@ class MainActivity : Activity() {
         score = prefs.getInt("score", 0)
         level = prefs.getInt("level", 1)
         streak = prefs.getInt("streak", 0)
-
-        val h = prefs.getString("history", "[]")
-        val f = prefs.getString("favorites", "[]")
-        val l = prefs.getString("lessons", "[]")
-        val a = prefs.getString("achievements", "[]")
-
+        readJsonObjects("history").forEach { history.add(it) }
+        readJsonObjects("favorites").forEach { favorites.add(it) }
         try {
-            val arr = JSONArray(h)
-            for (i in 0 until arr.length()) history.add(arr.getString(i))
+            val a = JSONArray(prefs.getString("lessons", "[]") ?: "[]")
+            for (i in 0 until a.length()) completedLessons.add(a.optInt(i))
         } catch (_: Exception) {}
-
         try {
-            val arr = JSONArray(f)
-            for (i in 0 until arr.length()) favorites.add(arr.getString(i))
-        } catch (_: Exception) {}
-
-        try {
-            val arr = JSONArray(l)
-            for (i in 0 until arr.length()) completedLessons.add(arr.getInt(i))
-        } catch (_: Exception) {}
-
-        try {
-            val arr = JSONArray(a)
-            for (i in 0 until arr.length()) achievements.add(arr.getString(i))
+            val a = JSONArray(prefs.getString("achievements", "[]") ?: "[]")
+            for (i in 0 until a.length()) achievements.add(a.optString(i))
         } catch (_: Exception) {}
     }
 
+    private fun readJsonObjects(key: String): List<JSONObject> {
+        val result = mutableListOf<JSONObject>()
+        try {
+            val array = JSONArray(prefs.getString(key, "[]") ?: "[]")
+            for (i in 0 until array.length()) {
+                val value = array.opt(i)
+                if (value is JSONObject) result.add(value)
+                else if (value is String) {
+                    try { result.add(JSONObject(value)) } catch (_: Exception) {}
+                }
+            }
+        } catch (_: Exception) {}
+        return result
+    }
+
     private fun saveData() {
-        val h = JSONArray()
-        history.forEach { h.put(it) }
-
-        val f = JSONArray()
-        favorites.forEach { f.put(it) }
-
-        val l = JSONArray()
-        completedLessons.forEach { l.put(it) }
-
-        val a = JSONArray()
-        achievements.forEach { a.put(it) }
-
+        fun objectArray(items: List<JSONObject>) = JSONArray().apply { items.forEach { put(it) } }
+        val lessonArray = JSONArray().apply { completedLessons.forEach { put(it) } }
+        val achievementArray = JSONArray().apply { achievements.forEach { put(it) } }
         prefs.edit()
             .putInt("score", score)
             .putInt("level", level)
             .putInt("streak", streak)
-            .putString("history", h.toString())
-            .putString("favorites", f.toString())
-            .putString("lessons", l.toString())
-            .putString("achievements", a.toString())
+            .putString("history", objectArray(history).toString())
+            .putString("favorites", objectArray(favorites).toString())
+            .putString("lessons", lessonArray.toString())
+            .putString("achievements", achievementArray.toString())
             .apply()
     }
 
     private fun buildMainLayout() {
         window.statusBarColor = dark
         window.navigationBarColor = dark
-        window.decorView.systemUiVisibility = 0
-
         root = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             setBackgroundColor(dark)
             layoutDirection = View.LAYOUT_DIRECTION_RTL
         }
-
         val header = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            setPadding(20, 18, 20, 12)
-            setBackgroundColor(dark)
-        }
-
-        val brand = TextView(this).apply {
-            text = "🦊 TON FOX"
-            textSize = 25f
-            setTextColor(gold)
-            typeface = Typeface.DEFAULT_BOLD
             gravity = Gravity.CENTER
+            setPadding(16, 14, 16, 12)
         }
-
-        val subtitle = TextView(this).apply {
-            text = "مترجم الفرانكو وأكاديمية التعلم"
-            textSize = 12f
-            setTextColor(muted)
-            gravity = Gravity.CENTER
-        }
-
-        header.addView(brand)
-        header.addView(subtitle)
-
+        header.addView(label("🦊 TON FOX", 25f, gold, true))
+        header.addView(label("مترجم الفرانكو وأكاديمية التعلم", 12f, muted))
         content = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            setPadding(17, 12, 17, 18)
+            setPadding(16, 12, 16, 18)
         }
-
         val scroll = ScrollView(this).apply {
             isFillViewport = true
             addView(content)
         }
-
         root.addView(header)
-
-        root.addView(
-            scroll,
-            LinearLayout.LayoutParams(
-                -1,
-                0,
-                1f
-            )
-        )
-
+        root.addView(scroll, LinearLayout.LayoutParams(-1, 0, 1f))
         root.addView(buildNavigation())
-
         setContentView(root)
     }
 
@@ -353,240 +207,147 @@ class MainActivity : Activity() {
         val nav = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER
-            setPadding(5, 10, 5, 10)
+            setPadding(4, 8, 4, 8)
             setBackgroundColor(panel)
         }
-
-        val items = listOf(
-            "الرئيسية" to "home",
-            "المترجم" to "translate",
-            "الأكاديمية" to "academy",
-            "المحفوظات" to "saved",
-            "المزيد" to "more"
-        )
-
-        items.forEach { item ->
-            val button = TextView(this).apply {
-                text = item.first
+        listOf("الرئيسية", "المترجم", "الأكاديمية", "المحفوظات", "المزيد").forEach { title ->
+            val v = TextView(this).apply {
+                text = title
                 textSize = 11f
                 gravity = Gravity.CENTER
                 setTextColor(gold)
-                setPadding(5, 10, 5, 10)
+                setPadding(4, 10, 4, 10)
                 setOnClickListener {
-                    when (item.second) {
-                        "home" -> showHome()
-                        "translate" -> showTranslator()
-                        "academy" -> showAcademy()
-                        "saved" -> showSaved()
-                        "more" -> showMore()
+                    when (title) {
+                        "الرئيسية" -> showHome()
+                        "المترجم" -> showTranslator()
+                        "الأكاديمية" -> showAcademy()
+                        "المحفوظات" -> showSaved()
+                        else -> showMore()
                     }
                 }
             }
-
-            nav.addView(
-                button,
-                LinearLayout.LayoutParams(0, -2, 1f)
-            )
+            nav.addView(v, LinearLayout.LayoutParams(0, -2, 1f))
         }
-
         return nav
     }
 
     private fun clearPage(title: String) {
-        currentPage = title
         content.removeAllViews()
-
-        val heading = TextView(this).apply {
-            text = title
-            textSize = 23f
-            typeface = Typeface.DEFAULT_BOLD
-            setTextColor(gold)
-            setPadding(0, 10, 0, 18)
-        }
-
-        content.addView(heading)
+        content.addView(label(title, 23f, gold, true))
+        addGap(8)
     }
 
-    private fun card(): LinearLayout {
-        return LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            setPadding(16, 15, 16, 15)
-            background = shape(panel, 18)
-        }
-    }
-
-    private fun shape(color: Int, radius: Int): GradientDrawable {
-        return GradientDrawable().apply {
+    private fun shape(color: Int, radius: Int, stroke: Int? = null): GradientDrawable =
+        GradientDrawable().apply {
             setColor(color)
             cornerRadius = radius.toFloat()
+            if (stroke != null) setStroke(1, stroke)
         }
-    }
 
-    private fun label(
-        value: String,
-        size: Float = 15f,
-        color: Int = cream,
-        bold: Boolean = false
-    ): TextView {
-        return TextView(this).apply {
+    private fun label(value: String, size: Float = 15f, color: Int = cream, bold: Boolean = false): TextView =
+        TextView(this).apply {
             text = value
             textSize = size
             setTextColor(color)
             if (bold) typeface = Typeface.DEFAULT_BOLD
-            setPadding(0, 5, 0, 5)
+            setPadding(2, 5, 2, 5)
         }
+
+    private fun makeLabel(value: String, size: Int, color: Int, bold: Boolean = false) =
+        label(value, size.toFloat(), color, bold)
+
+    private fun card(): LinearLayout = LinearLayout(this).apply {
+        orientation = LinearLayout.VERTICAL
+        setPadding(15, 13, 15, 13)
+        background = shape(panel, 16)
     }
 
-    private fun actionButton(
-        title: String,
-        onClick: () -> Unit
-    ): TextView {
-        return TextView(this).apply {
+    private fun addCard(block: LinearLayout.() -> Unit) {
+        val c = card()
+        c.block()
+        content.addView(c, LinearLayout.LayoutParams(-1, -2).apply { bottomMargin = 11 })
+    }
+
+    private fun addGap(height: Int = 10) {
+        content.addView(View(this), LinearLayout.LayoutParams(1, height))
+    }
+
+    private fun actionButton(title: String, onClick: () -> Unit): TextView =
+        actionButton(title, false, onClick)
+
+    private fun actionButton(title: String, primary: Boolean, onClick: () -> Unit): TextView =
+        TextView(this).apply {
             text = title
             textSize = 14f
             gravity = Gravity.CENTER
-            setTextColor(dark)
+            setTextColor(if (primary) dark else gold)
             typeface = Typeface.DEFAULT_BOLD
-            setPadding(15, 13, 15, 13)
-            background = shape(gold, 13)
+            setPadding(13, 12, 13, 12)
+            background = shape(if (primary) gold else panel, 12, if (primary) null else gold)
             setOnClickListener { onClick() }
         }
-    }
 
-    private fun addGap(height: Int = 12) {
-        content.addView(
-            View(this),
-            LinearLayout.LayoutParams(1, height)
-        )
-    }
-
-    private fun addCard(view: View) {
-        content.addView(
-            view,
-            LinearLayout.LayoutParams(-1, -2).apply {
-                bottomMargin = 12
-            }
-        )
+    private fun addAction(title: String, primary: Boolean = false, action: () -> Unit) {
+        content.addView(actionButton(title, primary, action),
+            LinearLayout.LayoutParams(-1, -2).apply { bottomMargin = 8 })
     }
 
     private fun showHome() {
         clearPage("الرئيسية")
-
-        val welcome = card()
-        welcome.addView(label("مرحباً بك في TON FOX 🦊", 19f, gold, true))
-        welcome.addView(
-            label(
-                "اكتب بالعربية وحوّل كلماتك إلى فرانكو، أو تعلّم الكتابة من خلال الأكاديمية.",
-                14f,
-                cream
-            )
-        )
-        welcome.addView(
-            label("إصدار V2 · محرك ترجمة محلي", 11f, muted)
-        )
-        addCard(welcome)
-
-        val stats = card()
-        stats.addView(label("مستواك التعليمي", 16f, gold, true))
-        stats.addView(label("المستوى: $level"))
-        stats.addView(label("نقاط الخبرة: $score XP"))
-        stats.addView(label("الدروس المكتملة: ${completedLessons.size}/${lessons.size}"))
-        stats.addView(label("الترجمات المحفوظة: ${history.size}"))
-        addCard(stats)
-
-        val translate = actionButton("📝 ابدأ الترجمة") {
-            showTranslator()
+        addCard {
+            addView(label("مرحباً بك في TON FOX 🦊", 19f, gold, true))
+            addView(label("حوّل العربية إلى فرانكو وتعلّم الكتابة خطوة بخطوة.", 14f))
+            addView(label("إصدار V2 · معالجة محلية", 11f, muted))
         }
-        addCard(translate)
-
-        val academy = actionButton("🎓 دخول الأكاديمية") {
-            showAcademy()
+        addCard {
+            addView(label("مستواك التعليمي", 17f, gold, true))
+            addView(label("المستوى: $level"))
+            addView(label("نقاط الخبرة: $score XP"))
+            addView(label("الدروس المكتملة: ${completedLessons.size}/${lessons.size}"))
+            addView(label("الترجمات: ${history.size}"))
         }
-        addCard(academy)
-
-        val daily = card()
-        daily.addView(label("✨ كلمة اليوم", 17f, gold, true))
-        val words = listOf(
-            "حبيبي" to "7abibi",
-            "شلونك" to "shlonak",
-            "صباح الخير" to "saba7 elkhair",
-            "شكراً" to "shukran",
-            "اشتقتلك" to "eshta2tellak"
-        )
-        val day = SimpleDateFormat("D", Locale.US)
-            .format(Date()).toInt()
-
-        val word = words[day % words.size]
-        daily.addView(label(word.first, 20f, cream, true))
-        daily.addView(label(word.second, 18f, gold))
-        addCard(daily)
-
-        checkAchievements()
+        addAction("📝 ابدأ الترجمة", true) { showTranslator() }
+        addAction("🎓 دخول الأكاديمية") { showAcademy() }
+        val words = listOf("حبيبي" to "7abibi", "شلونك" to "shlonak", "صباح الخير" to "saba7 elkhair", "شكراً" to "shukran", "اشتقتلك" to "eshta2tellak")
+        val day = SimpleDateFormat("D", Locale.US).format(Date()).toInt()
+        addCard {
+            addView(label("✨ كلمة اليوم", 17f, gold, true))
+            addView(label(words[day % words.size].first, 22f, cream, true))
+            addView(label(words[day % words.size].second, 18f, gold))
+        }
     }
 
     private fun showTranslator() {
         clearPage("المترجم الذكي")
-
-        val box = card()
-
-        box.addView(label("النص الذي تريد ترجمته", 15f, gold, true))
-
         val input = EditText(this).apply {
+            hint = "اكتب النص هنا..."
             textSize = 17f
             setTextColor(cream)
             setHintTextColor(muted)
-            hint = "اكتب النص هنا..."
             minLines = 4
             gravity = Gravity.TOP or Gravity.RIGHT
             setPadding(12, 12, 12, 12)
-            background = shape(dark, 12)
+            background = shape(dark, 12, gold)
             layoutDirection = View.LAYOUT_DIRECTION_RTL
         }
-
         sourceText = input
-
-        box.addView(
-            input,
-            LinearLayout.LayoutParams(-1, -2)
-        )
-
-        box.addView(label("اللهجة / نمط الكتابة", 14f, gold, true))
-
-        val dialects = arrayOf(
-            "العراقية",
-            "المصرية",
-            "الخليجية",
-            "العربية العامة"
-        )
-
-        val spinner = Spinner(this)
-        spinner.adapter = ArrayAdapter(
-            this,
-            android.R.layout.simple_spinner_dropdown_item,
-            dialects
-        )
-
-        spinner.setSelection(dialects.indexOf(currentDialect).coerceAtLeast(0))
-
-        spinner.onItemSelectedListener =
-            object : android.widget.AdapterView.OnItemSelectedListener {
+        addCard {
+            addView(label("النص المراد تحويله", 15f, gold, true))
+            addView(input, LinearLayout.LayoutParams(-1, -2))
+            addView(label("اللهجة / النمط", 14f, gold, true))
+            val spinner = Spinner(this@MainActivity)
+            val dialects = arrayOf("العراقية", "المصرية", "الخليجية", "العربية العامة")
+            spinner.adapter = ArrayAdapter(this@MainActivity, android.R.layout.simple_spinner_dropdown_item, dialects)
+            spinner.setSelection(dialects.indexOf(currentDialect).coerceAtLeast(0))
+            spinner.onItemSelectedListener = object : android.widget.AdapterView.OnItemSelectedListener {
                 override fun onNothingSelected(parent: android.widget.AdapterView<*>?) {}
-                override fun onItemSelected(
-                    parent: android.widget.AdapterView<*>?,
-                    view: View?,
-                    position: Int,
-                    id: Long
-                ) {
+                override fun onItemSelected(parent: android.widget.AdapterView<*>?, view: View?, position: Int, id: Long) {
                     currentDialect = dialects[position]
                 }
             }
-
-        box.addView(spinner)
-        addCard(box)
-
-        val outputCard = card()
-        outputCard.addView(label("نتيجة الترجمة", 15f, gold, true))
-
+            addView(spinner)
+        }
         val output = TextView(this).apply {
             text = "ستظهر الترجمة هنا..."
             textSize = 18f
@@ -594,243 +355,103 @@ class MainActivity : Activity() {
             setPadding(12, 15, 12, 15)
             background = shape(dark, 12)
             minHeight = 75
-            gravity = Gravity.CENTER_VERTICAL
             textIsSelectable = true
         }
-
         resultText = output
-        outputCard.addView(output)
-        addCard(outputCard)
-
-        val translate = actionButton("تحويل إلى فرانكو") {
-            val text = input.text.toString().trim()
-            if (text.isNotEmpty()) {
-                val result = toFranco(text)
-                output.text = result
-                addHistory(text, result)
+        addCard {
+            addView(label("النتيجة", 15f, gold, true))
+            addView(output)
+        }
+        addAction("تحويل إلى فرانكو", true) {
+            val value = input.text.toString().trim()
+            if (value.isBlank()) toast("اكتب نصاً أولاً") else {
+                val converted = translateToFranco(value)
+                output.text = converted
+                saveHistory(value, converted, "عربي ← فرانكو")
                 hideKeyboard(input)
-            } else {
-                toast("اكتب نصاً أولاً")
             }
         }
-        addCard(translate)
-
-        val reverse = actionButton("تحويل من فرانكو إلى العربية") {
-            val text = input.text.toString().trim()
-            if (text.isNotEmpty()) {
-                val result = toArabic(text)
-                output.text = result
-                addHistory(text, result)
+        addAction("تحويل من فرانكو إلى العربية") {
+            val value = input.text.toString().trim()
+            if (value.isBlank()) toast("اكتب نص فرانكو أولاً") else {
+                val converted = translateToArabic(value)
+                output.text = converted
+                saveHistory(value, converted, "فرانكو ← عربي")
                 hideKeyboard(input)
-            } else {
-                toast("اكتب نص فرانكو أولاً")
             }
         }
-        addCard(reverse)
-
-        addCard(actionButton("🔄 تبديل النص والنتيجة") {
+        addAction("تبديل النص والنتيجة") {
             val old = input.text.toString()
             input.setText(output.text.toString())
             output.text = old
-        })
-
-        addCard(actionButton("📋 نسخ النتيجة") {
-            copyText(output.text.toString())
-        })
-
-        addCard(actionButton("⭐ إضافة إلى المفضلة") {
+        }
+        addAction("نسخ النتيجة") { copyText(output.text.toString()) }
+        addAction("إضافة إلى المفضلة") {
             val value = output.text.toString()
-            if (value.isNotBlank() && value != "ستظهر الترجمة هنا...") {
-                if (!favorites.contains(value)) {
-                    favorites.add(value)
-                    saveData()
-                    toast("تمت الإضافة إلى المفضلة")
-                } else {
-                    toast("النص موجود مسبقاً")
-                }
-            }
-        })
-
-        addCard(actionButton("📤 مشاركة النتيجة") {
-            shareText(output.text.toString())
-        })
-    }
-
-    private fun hideKeyboard(view: View) {
-        val manager = getSystemService(INPUT_METHOD_SERVICE)
-            as InputMethodManager
-        manager.hideSoftInputFromWindow(view.windowToken, 0)
-    }
-
-    private fun copyText(text: String) {
-        if (text.isBlank()) {
-            toast("لا يوجد نص لنسخه")
-            return
+            if (value.isNotBlank() && value != "ستظهر الترجمة هنا...") addFavorite(input.text.toString(), value)
         }
-
-        val clipboard = getSystemService(CLIPBOARD_SERVICE)
-            as android.content.ClipboardManager
-
-        clipboard.setPrimaryClip(
-            android.content.ClipData.newPlainText("TON FOX", text)
-        )
-
-        toast("تم النسخ بنجاح")
-    }
-
-    private fun shareText(text: String) {
-        if (text.isBlank()) {
-            toast("لا يوجد نص للمشاركة")
-            return
-        }
-
-        val intent = Intent(Intent.ACTION_SEND).apply {
-            type = "text/plain"
-            putExtra(Intent.EXTRA_TEXT, "$text\n\nTON FOX 🦊")
-        }
-
-        startActivity(Intent.createChooser(intent, "مشاركة النص"))
-    }
-
-    private fun toast(message: String) {
-        Toast.makeText(this, message, Toast.LENGTH_SHORT).show()
-    }
-        private fun toast(message: String) {
-        Toast.makeText(this, message, Toast.LENGTH_SHORT).show()
+        addAction("مشاركة النتيجة") { shareText(output.text.toString()) }
+        addAction("🎙 إدخال صوتي") { startVoiceInput() }
     }
 
     private fun translateToFranco(input: String): String {
         if (input.isBlank()) return ""
-        val exact = dictionary[input.trim()]
-        if (exact != null) return exact
-
-        val map = mapOf(
-            'ا' to "a", 'أ' to "a", 'إ' to "e", 'آ' to "aa",
-            'ب' to "b", 'ت' to "t", 'ث' to "th", 'ج' to "j",
-            'ح' to "7", 'خ' to "kh", 'د' to "d", 'ذ' to "th",
-            'ر' to "r", 'ز' to "z", 'س' to "s", 'ش' to "sh",
-            'ص' to "9", 'ض' to "9'", 'ط' to "6", 'ظ' to "6'",
-            'ع' to "3", 'غ' to "gh", 'ف' to "f", 'ق' to "q",
-            'ك' to "k", 'ل' to "l", 'م' to "m", 'ن' to "n",
-            'ه' to "h", 'ة' to "a", 'و' to "w", 'ي' to "y",
-            'ى' to "a", 'ء' to "2", 'ؤ' to "2", 'ئ' to "2",
-            'پ' to "p", 'چ' to "ch", 'گ' to "g"
-        )
-
-        val output = StringBuilder()
-        input.forEach { character ->
-            val converted = map[character]
-            if (converted != null) {
-                output.append(converted)
-            } else {
-                output.append(character)
-            }
-        }
-        return output.toString()
+        dictionary[input.trim()]?.let { return it }
+        return input.map { arabicMap[it] ?: it.toString() }.joinToString("")
     }
 
     private fun translateToArabic(input: String): String {
         if (input.isBlank()) return ""
-
         val reverse = dictionary.entries.associate { it.value.lowercase() to it.key }
-        val exact = reverse[input.trim().lowercase()]
-        if (exact != null) return exact
-
-        val words = input.split(Regex("(\\s+)"))
-        return words.joinToString("") { word ->
-            if (word.isBlank()) {
-                word
-            } else {
-                reverse[word.lowercase()] ?: decodeFrancoWord(word)
-            }
+        reverse[input.trim().lowercase()]?.let { return it }
+        return input.split(Regex("(?<=\\s)|(?=\\s)")).joinToString("") { word ->
+            if (word.isBlank()) word else reverse[word.lowercase()] ?: decodeFrancoWord(word)
         }
     }
 
-    private fun decodeFrancoWord(original: String): String {
-        val word = original.lowercase()
+    private fun decodeFrancoWord(value: String): String {
         val replacements = listOf(
-            "sh" to "ش", "kh" to "خ", "gh" to "غ",
-            "th" to "ث", "ch" to "چ", "aa" to "ا",
-            "ee" to "ي", "oo" to "و", "ou" to "و",
-            "7'" to "ح", "6'" to "ظ", "9'" to "ض",
-            "2" to "ء", "3" to "ع", "5" to "خ",
-            "6" to "ط", "7" to "ح", "8" to "ق",
-            "9" to "ص", "a" to "ا", "b" to "ب",
-            "t" to "ت", "j" to "ج", "d" to "د",
-            "r" to "ر", "z" to "ز", "s" to "س",
-            "f" to "ف", "q" to "ق", "k" to "ك",
-            "l" to "ل", "m" to "م", "n" to "ن",
-            "h" to "ه", "w" to "و", "y" to "ي",
-            "p" to "پ", "g" to "گ", "e" to "ي",
+            "sh" to "ش", "kh" to "خ", "gh" to "غ", "th" to "ث", "ch" to "چ",
+            "aa" to "ا", "ee" to "ي", "oo" to "و", "2" to "ء", "3" to "ع",
+            "5" to "خ", "6" to "ط", "7" to "ح", "8" to "غ", "9" to "ص",
+            "a" to "ا", "b" to "ب", "t" to "ت", "j" to "ج", "d" to "د",
+            "r" to "ر", "z" to "ز", "s" to "س", "f" to "ف", "q" to "ق",
+            "k" to "ك", "l" to "ل", "m" to "م", "n" to "ن", "h" to "ه",
+            "w" to "و", "y" to "ي", "p" to "پ", "g" to "گ", "e" to "ي",
             "i" to "ي", "o" to "و", "u" to "و"
         )
-
-        val result = StringBuilder()
-        var index = 0
-        while (index < word.length) {
-            val remaining = word.substring(index)
-            val match = replacements.firstOrNull { remaining.startsWith(it.first) }
+        val text = value.lowercase()
+        val out = StringBuilder()
+        var i = 0
+        while (i < text.length) {
+            val match = replacements.firstOrNull { text.startsWith(it.first, i) }
             if (match != null) {
-                result.append(match.second)
-                index += match.first.length
+                out.append(match.second)
+                i += match.first.length
             } else {
-                result.append(word[index])
-                index++
+                out.append(text[i])
+                i++
             }
         }
-        return result.toString()
-    }
-
-    private fun runTranslation(toFranco: Boolean) {
-        val input = sourceText.text.toString().trim()
-        if (input.isEmpty()) {
-            toast("اكتب النص أولاً")
-            sourceText.requestFocus()
-            return
-        }
-
-        val output = if (toFranco) {
-            translateToFranco(input)
-        } else {
-            translateToArabic(input)
-        }
-
-        resultText.text = output
-        saveHistory(input, output, if (toFranco) "عربي ← فرانكو" else "فرانكو ← عربي")
-        hideKeyboard()
+        return out.toString()
     }
 
     private fun saveHistory(input: String, output: String, direction: String) {
-        history.add(
-            0,
-            JSONObject().apply {
-                put("input", input)
-                put("output", output)
-                put("direction", direction)
-                put("time", System.currentTimeMillis())
-            }
-        )
+        history.add(0, JSONObject().apply {
+            put("input", input); put("output", output); put("direction", direction); put("time", System.currentTimeMillis())
+        })
         while (history.size > 250) history.removeAt(history.lastIndex)
         saveData()
     }
 
     private fun addFavorite(input: String, output: String) {
-        val exists = favorites.any {
-            it.optString("input") == input && it.optString("output") == output
-        }
-        if (exists) {
-            toast("هذه العبارة موجودة في المفضلة")
+        if (favorites.any { it.optString("input") == input && it.optString("output") == output }) {
+            toast("العبارة موجودة مسبقاً")
             return
         }
-
-        favorites.add(
-            0,
-            JSONObject().apply {
-                put("input", input)
-                put("output", output)
-                put("time", System.currentTimeMillis())
-            }
-        )
+        favorites.add(0, JSONObject().apply {
+            put("input", input); put("output", output); put("time", System.currentTimeMillis())
+        })
         saveData()
         toast("تمت الإضافة إلى المفضلة")
     }
@@ -838,804 +459,369 @@ class MainActivity : Activity() {
     private fun showAcademy() {
         clearPage("أكاديمية TON FOX")
         addCard {
-            label("تعلّم الفرانكو خطوة بخطوة", 21, gold, true)
-            label(
-                "دروس قصيرة واختبارات تفاعلية تساعدك على فهم الحروف والأرقام والكلمات.",
-                14,
-                muted
-            )
-            addGap(12)
-            label("المستوى الحالي: $level", 16, cream, true)
-            label("النقاط المكتسبة: $score XP", 14, gold)
-            label("الدروس المكتملة: ${completedLessons.size} من ${lessons.size}", 14, muted)
+            addView(label("تعلّم الفرانكو خطوة بخطوة", 20f, gold, true))
+            addView(label("المستوى $level · $score XP · ${completedLessons.size}/${lessons.size} دروس مكتملة", 14f, muted))
         }
-
         lessons.forEachIndexed { index, lesson ->
-            val completed = completedLessons.contains(index)
             addCard {
-                rowLayout {
-                    val info = LinearLayout(this@MainActivity).apply {
-                        orientation = LinearLayout.VERTICAL
-                        layoutParams = LinearLayout.LayoutParams(0, -2, 1f)
-                    }
-                    info.addView(makeLabel("الدرس ${index + 1}: ${lesson.title}", 16, cream, true))
-                    info.addView(makeLabel(lesson.description, 12, muted))
-                    addView(info)
-                    addView(makeLabel(if (completed) "✓ مكتمل" else "ابدأ", 13, gold, true))
-                }
-                actionButton(
-                    if (completed) "مراجعة الدرس" else "فتح الدرس",
-                    true
-                ) {
-                    showLesson(index)
-                }
+                addView(label("${if (completedLessons.contains(index)) "✓" else "○"} الدرس ${index + 1}: ${lesson.title}", 16f, gold, true))
+                addView(label(lesson.description, 13f, muted))
+                addView(actionButton("فتح الدرس") { showLesson(index) })
             }
         }
-
-        actionButton("اختبار شامل", false) { startQuiz(-1) }
+        addAction("اختبار شامل", true) { startQuiz(-1) }
     }
 
     private fun showLesson(index: Int) {
         if (index !in lessons.indices) return
         val lesson = lessons[index]
         clearPage(lesson.title)
-
         addCard {
-            label("الدرس ${index + 1} من ${lessons.size}", 13, gold, true)
-            label(lesson.title, 23, cream, true)
-            label(lesson.description, 14, muted)
-            addGap(10)
-            lesson.content.forEachIndexed { i, line ->
-                label("${i + 1}. $line", 15, cream)
-                addGap(7)
-            }
+            addView(label("الدرس ${index + 1} من ${lessons.size}", 13f, gold, true))
+            addView(label(lesson.description, 14f, muted))
+            lesson.content.forEachIndexed { i, line -> addView(label("${i + 1}. $line", 15f)) }
         }
-
+        val answer = EditText(this).apply {
+            hint = "اكتب التحويل بالفرانكو"
+            setTextColor(cream)
+            setHintTextColor(muted)
+            background = shape(panel, 12, gold)
+            setPadding(12, 12, 12, 12)
+        }
         addCard {
-            label("تدرّب بنفسك", 18, gold, true)
-            label("حوّل الكلمة التالية إلى فرانكو:", 14, cream)
-            label(lesson.exampleArabic, 23, cream, true)
-            val answer = EditText(this).apply {
-                hint = "اكتب الإجابة هنا"
-                setTextColor(cream)
-                setHintTextColor(muted)
-                textSize = 16f
-                setPadding(14, 12, 14, 12)
-                background = shape(panel, 12, gold)
-            }
+            addView(label("تدريب: ${lesson.exampleArabic}", 18f, gold, true))
             addView(answer)
-            actionButton("تحقق من الإجابة", true) {
-                val expected = translateToFranco(lesson.exampleArabic)
-                    .replace(" ", "")
-                    .lowercase()
-                val entered = answer.text.toString()
-                    .replace(" ", "")
-                    .lowercase()
-
-                if (entered == expected || entered == lesson.acceptedAnswer.lowercase()) {
-                    completedLessons.add(index)
-                    completedLessons.distinct()
-                    score += 20
+            addView(actionButton("تحقق من الإجابة", true) {
+                val entered = answer.text.toString().replace(" ", "").lowercase()
+                val expected = lesson.acceptedAnswer.replace(" ", "").lowercase()
+                if (entered == expected || entered == translateToFranco(lesson.exampleArabic).replace(" ", "").lowercase()) {
+                    if (completedLessons.add(index)) score += 20
                     updateLevel()
                     saveData()
-                    toast("إجابة صحيحة! +20 XP")
+                    toast("إجابة صحيحة!")
                     showLesson(index)
-                } else {
-                    toast("حاول مرة أخرى، الإجابة التقريبية: $expected")
-                }
-            }
+                } else toast("حاول مرة أخرى. مثال: $expected")
+            })
         }
-
-        actionButton("اختبار هذا الدرس", false) { startQuiz(index) }
-        actionButton("العودة إلى الأكاديمية", false) { showAcademy() }
+        addAction("اختبار هذا الدرس") { startQuiz(index) }
+        addAction("العودة للأكاديمية") { showAcademy() }
     }
 
-    private fun updateLevel() {
-        level = (score / 100) + 1
-    }
+    private fun updateLevel() { level = score / 100 + 1 }
 
     private fun startQuiz(lessonIndex: Int) {
-        val questions = if (lessonIndex >= 0) {
-            listOf(lessons[lessonIndex])
-        } else {
-            lessons.shuffled().take(5)
-        }
-
-        var questionIndex = 0
-        var correctAnswers = 0
-
-        fun displayQuestion() {
-            if (questionIndex >= questions.size) {
-                val earned = correctAnswers * 10
+        val questions = if (lessonIndex >= 0) listOf(lessons[lessonIndex]) else lessons.shuffled().take(5)
+        var index = 0
+        var correct = 0
+        fun next() {
+            if (index >= questions.size) {
+                val earned = correct * 10
                 score += earned
                 updateLevel()
                 saveData()
                 clearPage("نتيجة الاختبار")
                 addCard {
-                    label("انتهى الاختبار!", 24, gold, true)
-                    label("إجابات صحيحة: $correctAnswers من ${questions.size}", 18, cream)
-                    label("النقاط المكتسبة: $earned XP", 16, gold)
+                    addView(label("انتهى الاختبار!", 23f, gold, true))
+                    addView(label("الإجابات الصحيحة: $correct/${questions.size}", 17f))
+                    addView(label("+$earned XP", 16f, gold))
                 }
-                actionButton("العودة إلى الأكاديمية", true) { showAcademy() }
+                addAction("العودة للأكاديمية", true) { showAcademy() }
                 return
             }
-
-            val lesson = questions[questionIndex]
-            clearPage("اختبار ${questionIndex + 1}/${questions.size}")
+            val lesson = questions[index]
+            val expected = translateToFranco(lesson.exampleArabic)
+            clearPage("السؤال ${index + 1}/${questions.size}")
             addCard {
-                label("حوّل هذه الكلمة إلى فرانكو", 17, gold, true)
-                label(lesson.exampleArabic, 25, cream, true)
-                val expected = translateToFranco(lesson.exampleArabic)
-                val choices = (listOf(expected) +
-                    lessons.filter { it != lesson }
-                        .map { translateToFranco(it.exampleArabic) }
-                        .shuffled().take(3)).shuffled()
-
+                addView(label("حوّل: ${lesson.exampleArabic}", 20f, gold, true))
+                val choices = (listOf(expected) + lessons.filter { it != lesson }.map { translateToFranco(it.exampleArabic) }.shuffled().take(3)).distinct().shuffled()
                 choices.forEach { choice ->
-                    actionButton(choice, false) {
-                        if (choice == expected) {
-                            correctAnswers++
-                            toast("إجابة صحيحة")
-                        } else {
-                            toast("ليست الإجابة الصحيحة")
-                        }
-                        questionIndex++
-                        displayQuestion()
-                    }
+                    addView(actionButton(choice) {
+                        if (choice == expected) correct++
+                        index++
+                        next()
+                    })
                 }
             }
         }
-
-        displayQuestion()
-    }
-
-    private fun rowLayout(content: LinearLayout.() -> Unit): LinearLayout {
-        return LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER_VERTICAL
-            content()
-        }
-    }
-
-    private fun makeLabel(
-        text: String,
-        size: Int,
-        color: Int,
-        bold: Boolean = false
-    ): TextView {
-        return TextView(this).apply {
-            this.text = text
-            textSize = size.toFloat()
-            setTextColor(color)
-            if (bold) typeface = Typeface.DEFAULT_BOLD
-            gravity = Gravity.CENTER_VERTICAL
-            setPadding(4, 5, 4, 5)
-        }
-    }
-        private fun makeLabel(
-        text: String,
-        size: Int,
-        color: Int,
-        bold: Boolean = false
-    ): TextView {
-        return TextView(this).apply {
-            this.text = text
-            textSize = size.toFloat()
-            setTextColor(color)
-            if (bold) typeface = Typeface.DEFAULT_BOLD
-            gravity = Gravity.CENTER_VERTICAL
-            setPadding(4, 5, 4, 5)
-        }
+        next()
     }
 
     private fun showDictionary() {
         clearPage("القاموس")
-        addCard {
-            label("قاموس فرانكو وعربي", 21, gold, true)
-            label("ابحث عن كلمة عربية أو فرانكو لتحصل على تحويل تقريبي.", 13, muted)
-            val search = EditText(this@MainActivity).apply {
-                hint = "اكتب كلمة للبحث..."
-                setTextColor(cream)
-                setHintTextColor(muted)
-                textSize = 16f
-                setPadding(14, 12, 14, 12)
-                background = shape(panel, 12, gold)
-            }
-            addView(search)
-
-            val results = LinearLayout(this@MainActivity).apply {
-                orientation = LinearLayout.VERTICAL
-            }
-            addView(results)
-
-            fun render(query: String) {
-                results.removeAllViews()
-                if (query.isBlank()) {
-                    results.addView(makeLabel("ابدأ بكتابة كلمة للبحث.", 13, muted))
-                    return
-                }
-
-                val matches = dictionary.entries.filter {
-                    it.key.contains(query, true) ||
-                        it.value.contains(query, true)
-                }.take(30)
-
-                if (matches.isEmpty()) {
-                    val converted = if (query.any { it in 'ا'..'ي' }) {
-                        translateToFranco(query)
-                    } else {
-                        translateToArabic(query)
-                    }
-                    results.addView(
-                        makeLabel("$query  ←  $converted", 15, cream)
-                    )
-                } else {
-                    matches.forEach { entry ->
-                        results.addView(
-                            makeLabel("${entry.key}  —  ${entry.value}", 15, cream)
-                        )
-                    }
-                }
-            }
-
-            search.addTextChangedListener(object : TextWatcher {
-                override fun beforeTextChanged(
-                    s: CharSequence?,
-                    start: Int,
-                    count: Int,
-                    after: Int
-                ) = Unit
-
-                override fun onTextChanged(
-                    s: CharSequence?,
-                    start: Int,
-                    before: Int,
-                    count: Int
-                ) {
-                    render(s?.toString().orEmpty())
-                }
-
-                override fun afterTextChanged(s: Editable?) = Unit
-            })
-            render("")
+        val search = EditText(this).apply {
+            hint = "ابحث بالعربية أو الفرانكو"
+            setTextColor(cream); setHintTextColor(muted); background = shape(panel, 12, gold)
+            setPadding(12, 12, 12, 12)
         }
-
-        actionButton("بطاقات حفظ الكلمات", true) { showFlashcards() }
+        val results = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        content.addView(search)
+        content.addView(results)
+        fun render(q: String) {
+            results.removeAllViews()
+            dictionary.filter { it.key.contains(q, true) || it.value.contains(q, true) }
+                .forEach { (ar, fr) -> results.addView(label("$ar  —  $fr", 15f, cream)) }
+        }
+        search.addTextChangedListener(object : TextWatcher {
+            override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) {}
+            override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) { render(s?.toString().orEmpty()) }
+            override fun afterTextChanged(s: Editable?) {}
+        })
+        render("")
+        addAction("بطاقات حفظ الكلمات", true) { showFlashcards() }
     }
 
     private fun showFlashcards() {
         val entries = dictionary.entries.toList()
-        if (entries.isEmpty()) {
-            toast("لا توجد كلمات في القاموس")
-            return
-        }
-
         var index = 0
-        var showMeaning = false
-
-        fun renderCard() {
+        var reveal = false
+        fun render() {
             clearPage("بطاقات الحفظ")
             val entry = entries[index % entries.size]
-
             addCard {
-                label("بطاقة ${index + 1} من ${entries.size}", 13, muted)
-                label(
-                    if (showMeaning) entry.value else entry.key,
-                    30,
-                    gold,
-                    true
-                )
-                label(
-                    if (showMeaning) "التحويل بالفرانكو" else "اضغط لإظهار التحويل",
-                    13,
-                    muted
-                )
-                actionButton(
-                    if (showMeaning) "إخفاء الإجابة" else "إظهار الإجابة",
-                    true
-                ) {
-                    showMeaning = !showMeaning
-                    renderCard()
-                }
+                addView(label("بطاقة ${index + 1}/${entries.size}", 13f, muted))
+                addView(label(if (reveal) entry.value else entry.key, 28f, gold, true))
+                addView(actionButton(if (reveal) "إخفاء الإجابة" else "إظهار الإجابة", true) {
+                    reveal = !reveal; render()
+                })
             }
-
-            actionButton("البطاقة التالية", false) {
-                index = (index + 1) % entries.size
-                showMeaning = false
-                renderCard()
-            }
-            actionButton("العودة للقاموس", false) { showDictionary() }
+            addAction("البطاقة التالية") { index = (index + 1) % entries.size; reveal = false; render() }
+            addAction("العودة للقاموس") { showDictionary() }
         }
-
-        renderCard()
+        if (entries.isNotEmpty()) render()
     }
 
     private fun showSaved() {
         clearPage("المحفوظات")
-
         addCard {
-            label("المفضلة", 20, gold, true)
-            label("${favorites.size} عبارة محفوظة", 13, muted)
+            addView(label("المفضلة (${favorites.size})", 19f, gold, true))
         }
-
-        if (favorites.isEmpty()) {
+        if (favorites.isEmpty()) addCard { addView(label("لا توجد عبارات محفوظة.", 14f, muted)) }
+        favorites.toList().forEach { item ->
             addCard {
-                label("لا توجد عبارات محفوظة حتى الآن.", 14, muted)
+                addView(label(item.optString("input"), 15f, cream, true))
+                addView(label(item.optString("output"), 15f, gold))
+                addView(actionButton("نسخ النتيجة") { copyText(item.optString("output")) })
+                addView(actionButton("حذف") {
+                    favorites.remove(item); saveData(); showSaved()
+                })
             }
         }
-
-        favorites.toList().forEachIndexed { index, item ->
-            addCard {
-                label(item.optString("input"), 16, cream, true)
-                label(item.optString("output"), 15, gold)
-                rowLayout {
-                    addView(
-                        actionButtonView("نسخ") {
-                            copyText(item.optString("output"))
-                        },
-                        LinearLayout.LayoutParams(0, -2, 1f)
-                    )
-                    addView(
-                        actionButtonView("استخدام") {
-                            sourceText.setText(item.optString("input"))
-                            showTranslator()
-                        },
-                        LinearLayout.LayoutParams(0, -2, 1f)
-                    )
-                    addView(
-                        actionButtonView("حذف") {
-                            favorites.removeAt(index)
-                            saveData()
-                            showSaved()
-                        },
-                        LinearLayout.LayoutParams(0, -2, 1f)
-                    )
-                }
-            }
-        }
-
-        addGap(10)
-        label("سجل الترجمات", 19, gold, true)
-
-        if (history.isEmpty()) {
-            label("سجل الترجمات فارغ.", 13, muted)
-        }
-
+        addGap()
+        content.addView(label("سجل الترجمات (${history.size})", 19f, gold, true))
         history.take(60).forEach { item ->
             addCard {
-                label(item.optString("direction"), 12, gold, true)
-                label(item.optString("input"), 14, cream)
-                label(item.optString("output"), 14, muted)
-                actionButton("إعادة استخدام النص", false) {
-                    sourceText.setText(item.optString("input"))
+                addView(label(item.optString("direction"), 12f, gold))
+                addView(label(item.optString("input"), 14f))
+                addView(label(item.optString("output"), 14f, muted))
+                addView(actionButton("إعادة استخدام") {
                     showTranslator()
-                }
+                    sourceText?.setText(item.optString("input"))
+                })
             }
         }
-
-        actionButton("مسح سجل الترجمات", false) {
-            history.clear()
-            saveData()
-            showSaved()
-            toast("تم مسح السجل")
-        }
-    }
-
-    private fun actionButtonView(
-        title: String,
-        action: () -> Unit
-    ): TextView {
-        return TextView(this).apply {
-            text = title
-            textSize = 12f
-            gravity = Gravity.CENTER
-            setTextColor(gold)
-            setPadding(8, 12, 8, 12)
-            background = shape(panel, 10, gold)
-            setOnClickListener { action() }
+        addAction("مسح السجل") {
+            AlertDialog.Builder(this).setTitle("مسح السجل؟")
+                .setMessage("سيتم حذف سجل الترجمات فقط.")
+                .setNegativeButton("إلغاء", null)
+                .setPositiveButton("حذف") { _, _ -> history.clear(); saveData(); showSaved() }
+                .show()
         }
     }
 
     private fun showHistorySearch() {
         clearPage("البحث في السجل")
-        val search = EditText(this).apply {
-            hint = "ابحث في الترجمات السابقة"
-            setTextColor(cream)
-            setHintTextColor(muted)
-            background = shape(panel, 12, gold)
-            setPadding(14, 12, 14, 12)
-        }
-        content.addView(search)
-
-        val results = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-        }
-        content.addView(results)
-
-        fun render(query: String) {
+        val input = EditText(this).apply { hint = "ابحث في السجل"; setTextColor(cream); setHintTextColor(muted) }
+        val results = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        content.addView(input); content.addView(results)
+        fun render(q: String) {
             results.removeAllViews()
-            history.filter {
-                it.optString("input").contains(query, true) ||
-                    it.optString("output").contains(query, true)
-            }.take(50).forEach { item ->
-                addResultCard(
-                    results,
-                    item.optString("input"),
-                    item.optString("output")
-                )
-            }
+            history.filter { it.optString("input").contains(q, true) || it.optString("output").contains(q, true) }
+                .forEach { item ->
+                    results.addView(label("${item.optString("input")}  —  ${item.optString("output")}", 14f))
+                }
         }
-
-        search.addTextChangedListener(object : TextWatcher {
-            override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) = Unit
-            override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {
-                render(s?.toString().orEmpty())
-            }
-            override fun afterTextChanged(s: Editable?) = Unit
+        input.addTextChangedListener(object : TextWatcher {
+            override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) {}
+            override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) { render(s?.toString().orEmpty()) }
+            override fun afterTextChanged(s: Editable?) {}
         })
         render("")
     }
 
-    private fun addResultCard(
-        parent: LinearLayout,
-        input: String,
-        output: String
-    ) {
-        val container = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            setPadding(12, 10, 12, 10)
-            background = shape(panel, 12, gold)
-        }
-        container.addView(makeLabel(input, 14, cream, true))
-        container.addView(makeLabel(output, 14, gold))
-        container.setOnClickListener {
-            sourceText.setText(input)
-            showTranslator()
-        }
-        val params = LinearLayout.LayoutParams(-1, -2)
-        params.bottomMargin = 9
-        parent.addView(container, params)
-    }
-
     private fun showPhraseGenerator() {
         clearPage("مولّد العبارات")
-
-        val categories = listOf(
-            "تحيات" to listOf(
-                "شلونك؟", "صباح الخير", "مساء الخير",
-                "أهلاً وسهلاً", "نورت المكان"
-            ),
-            "يوميّات" to listOf(
-                "وينك؟", "شنو الأخبار؟", "أنا بالطريق",
-                "انتظرني قليلاً", "أشوفك بعدين"
-            ),
-            "مشاعر" to listOf(
-                "اشتقت لك", "أنت غالي", "أحب وجودك",
-                "الله يسعدك", "أتمنى لك الخير"
-            ),
-            "دراسة" to listOf(
-                "عندي امتحان", "أحتاج مساعدة",
-                "فهمت الدرس", "خل نراجع سوا"
-            )
-        )
-
-        categories.forEach { category ->
+        val phrases = listOf("شلونك؟", "صباح الخير", "وينك؟", "شنو الأخبار؟", "أنا بالطريق", "اشتقت لك", "الله يسعدك", "عندي امتحان", "أحتاج مساعدة")
+        phrases.forEach { phrase ->
             addCard {
-                label(category.first, 18, gold, true)
-                category.second.forEach { phrase ->
-                    rowLayout {
-                        val phraseLabel = makeLabel(phrase, 14, cream)
-                        addView(
-                            phraseLabel,
-                            LinearLayout.LayoutParams(0, -2, 1f)
-                        )
-                        addView(
-                            actionButtonView("فرانكو") {
-                                val converted = translateToFranco(phrase)
-                                resultText.text = converted
-                                copyText(converted)
-                            },
-                            LinearLayout.LayoutParams(100, -2)
-                        )
-                    }
-                }
+                addView(label(phrase, 15f, cream))
+                addView(actionButton("تحويل ونسخ") {
+                    val converted = translateToFranco(phrase)
+                    copyText(converted)
+                    toast(converted)
+                })
             }
         }
     }
 
     private fun showNameGenerator() {
         clearPage("مولّد الأسماء")
-
-        val names = listOf(
-            "نور", "ليث", "زين", "آدم", "علي", "حسن",
-            "حسين", "مريم", "زهراء", "فاطمة", "سارة",
-            "ياسمين", "رُبى", "محمد", "يوسف", "كرار",
-            "مصطفى", "حيدر", "رؤى", "ملك"
-        )
-
-        val output = TextView(this).apply {
-            text = "اضغط على الزر لتوليد اسم"
-            textSize = 24f
-            gravity = Gravity.CENTER
-            setTextColor(gold)
-            setPadding(12, 25, 12, 25)
-        }
-
+        val names = listOf("نور", "ليث", "زين", "آدم", "علي", "حسن", "حسين", "مريم", "زهراء", "فاطمة", "سارة", "ياسمين", "محمد", "يوسف", "كرار", "مصطفى", "حيدر")
+        val output = label("اضغط لتوليد اسم", 24f, gold, true)
         addCard {
-            label("اقتراح اسم عشوائي", 18, gold, true)
             addView(output)
-            actionButton("توليد اسم", true) {
+            addView(actionButton("توليد اسم", true) {
                 val name = names.random()
                 output.text = "$name\n${translateToFranco(name)}"
-            }
-            actionButton("نسخ الاسم", false) {
-                val value = output.text.toString().substringBefore("\n")
-                if (value.isNotBlank() && !value.startsWith("اضغط")) {
-                    copyText(value)
-                }
-            }
+            })
+            addView(actionButton("نسخ الاسم") { copyText(output.text.toString().substringBefore("\n")) })
         }
     }
-        private fun showStatistics() {
-        clearPage("الإحصائيات والإنجازات")
 
-        val totalTranslations = history.size
-        val totalFavorites = favorites.size
-        val totalLessons = completedLessons.distinct().size
-
+    private fun showStatistics() {
+        clearPage("الإحصائيات")
         addCard {
-            label("إحصائيات استخدام TON FOX", 20, gold, true)
-            label("إجمالي الترجمات: $totalTranslations", 16, cream)
-            label("العبارات المفضلة: $totalFavorites", 16, cream)
-            label("الدروس المكتملة: $totalLessons / ${lessons.size}", 16, cream)
-            label("النقاط: $score XP", 16, gold, true)
-            label("المستوى: $level", 16, cream)
-            label("سلسلة التعلم: $streak يوم", 16, cream)
-        }
-
-        addCard {
-            label("إنجازاتك", 19, gold, true)
-
-            val achievementsList = listOf(
-                Triple("أول ترجمة", totalTranslations >= 1, "أنجز أول ترجمة"),
-                Triple("مترجم نشيط", totalTranslations >= 10, "أنجز 10 ترجمات"),
-                Triple("جامع الكلمات", totalFavorites >= 5, "احفظ 5 عبارات"),
-                Triple("طالب مجتهد", totalLessons >= 3, "أكمل 3 دروس"),
-                Triple("خبير فرانكو", totalLessons >= 7, "أكمل جميع الدروس"),
-                Triple("صاحب النقاط", score >= 100, "اجمع 100 نقطة")
-            )
-
-            achievementsList.forEach { item ->
-                val status = if (item.second) "✓" else "○"
-                label("$status  ${item.first}", 15, if (item.second) gold else muted)
-                label(item.third, 12, muted)
-            }
+            addView(label("الترجمات: ${history.size}", 16f))
+            addView(label("المفضلة: ${favorites.size}", 16f))
+            addView(label("الدروس: ${completedLessons.size}/${lessons.size}", 16f))
+            addView(label("النقاط: $score XP", 16f, gold, true))
+            addView(label("المستوى: $level", 16f))
+            addView(label("سلسلة التعلم: $streak يوم", 16f))
         }
     }
 
     private fun showSettings() {
         clearPage("الإعدادات")
-
         addCard {
-            label("إعدادات التطبيق", 20, gold, true)
-            label("TON FOX يعمل محلياً ويحفظ بياناتك على الجهاز.", 13, muted)
-        }
-
-        addCard {
-            label("إدارة البيانات", 18, gold, true)
-            actionButton("تصدير نسخة احتياطية", true) {
-                exportBackup()
-            }
-            actionButton("استيراد نسخة احتياطية", false) {
-                importBackup()
-            }
-            actionButton("حذف جميع البيانات", false) {
-                confirmClearData()
-            }
-        }
-
-        addCard {
-            label("معلومات التطبيق", 18, gold, true)
-            label("TON FOX V2", 16, cream, true)
-            label("مترجم عربي وفرانكو مع أكاديمية تعليمية.", 13, muted)
-            label("المطور: N5CR4", 14, gold)
-            label("Telegram: @N5CR4", 14, cream)
-            actionButton("مشاركة التطبيق", false) {
-                shareText("جرّب TON FOX لتعلّم وتحويل العربية والفرانكو.")
-            }
-            actionButton("تواصل مع المطور", false) {
-                val intent = Intent(
-                    Intent.ACTION_VIEW,
-                    android.net.Uri.parse("https://t.me/N5CR4")
-                )
-                try {
-                    startActivity(intent)
-                } catch (_: Exception) {
-                    toast("تعذر فتح رابط تيليجرام")
-                }
-            }
-        }
-    }
-
-    private fun confirmClearData() {
-        AlertDialog.Builder(this)
-            .setTitle("حذف البيانات")
-            .setMessage("سيتم حذف سجل الترجمات والمفضلة والتقدم التعليمي من هذا الجهاز. هل تريد المتابعة؟")
-            .setNegativeButton("إلغاء", null)
-            .setPositiveButton("حذف") { _, _ ->
-                history.clear()
-                favorites.clear()
-                completedLessons.clear()
-                score = 0
-                level = 1
-                streak = 0
-                saveData()
-                showSettings()
-                toast("تم حذف البيانات المحلية")
-            }
-            .show()
-    }
-
-    private fun exportBackup() {
-        val backup = JSONObject().apply {
-            put("app", "TON FOX")
-            put("version", 2)
-            put("created", System.currentTimeMillis())
-            put("history", JSONArray().apply {
-                history.forEach { put(it) }
+            addView(label("TON FOX V2", 20f, gold, true))
+            addView(label("يعمل التطبيق محلياً ويحفظ بياناته على الجهاز.", 14f, muted))
+            addView(label("المطور: N5CR4", 14f, cream))
+            addView(label("Telegram: @N5CR4", 14f, gold))
+            addView(actionButton("تصدير نسخة احتياطية", true) { exportBackup() })
+            addView(actionButton("استيراد نسخة احتياطية") { importBackup() })
+            addView(actionButton("حذف جميع البيانات") { confirmClearData() })
+            addView(actionButton("التواصل مع المطور") {
+                try { startActivity(Intent(Intent.ACTION_VIEW, android.net.Uri.parse("https://t.me/N5CR4"))) }
+                catch (_: Exception) { toast("تعذر فتح تيليجرام") }
             })
-            put("favorites", JSONArray().apply {
-                favorites.forEach { put(it) }
-            })
-            put("completedLessons", JSONArray().apply {
-                completedLessons.forEach { put(it) }
-            })
-            put("score", score)
-            put("level", level)
-            put("streak", streak)
-        }
-
-        val shareIntent = Intent(Intent.ACTION_SEND).apply {
-            type = "application/json"
-            putExtra(Intent.EXTRA_SUBJECT, "TON FOX Backup")
-            putExtra(Intent.EXTRA_TEXT, backup.toString(2))
-        }
-
-        try {
-            startActivity(Intent.createChooser(shareIntent, "حفظ أو مشاركة النسخة الاحتياطية"))
-        } catch (_: Exception) {
-            toast("تعذر فتح نافذة المشاركة")
-        }
-    }
-
-    private fun importBackup() {
-        val intent = Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
-            addCategory(Intent.CATEGORY_OPENABLE)
-            type = "application/json"
-        }
-
-        try {
-            startActivityForResult(intent, REQUEST_IMPORT_BACKUP)
-        } catch (_: Exception) {
-            toast("تعذر فتح مدير الملفات")
-        }
-    }
-
-    private fun onBackupImported(uri: android.net.Uri) {
-        try {
-            val jsonText = contentResolver.openInputStream(uri)
-                ?.bufferedReader()
-                ?.use { it.readText() }
-                ?: throw IllegalStateException("تعذر قراءة الملف")
-
-            val backup = JSONObject(jsonText)
-            if (backup.optString("app") != "TON FOX") {
-                toast("هذا الملف ليس نسخة احتياطية من TON FOX")
-                return
-            }
-
-            history.clear()
-            favorites.clear()
-            completedLessons.clear()
-
-            val savedHistory = backup.optJSONArray("history") ?: JSONArray()
-            for (i in 0 until savedHistory.length()) {
-                history.add(savedHistory.getJSONObject(i))
-            }
-
-            val savedFavorites = backup.optJSONArray("favorites") ?: JSONArray()
-            for (i in 0 until savedFavorites.length()) {
-                favorites.add(savedFavorites.getJSONObject(i))
-            }
-
-            val savedLessons = backup.optJSONArray("completedLessons") ?: JSONArray()
-            for (i in 0 until savedLessons.length()) {
-                completedLessons.add(savedLessons.optInt(i))
-            }
-
-            score = backup.optInt("score", 0).coerceAtLeast(0)
-            level = backup.optInt("level", 1).coerceAtLeast(1)
-            streak = backup.optInt("streak", 0).coerceAtLeast(0)
-
-            saveData()
-            showHome()
-            toast("تم استيراد النسخة الاحتياطية بنجاح")
-        } catch (error: Exception) {
-            toast("تعذر استيراد النسخة: ${error.message ?: "ملف غير صالح"}")
-        }
-    }
-
-    private fun startVoiceInput() {
-        val intent = Intent(android.speech.RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
-            putExtra(
-                android.speech.RecognizerIntent.EXTRA_LANGUAGE_MODEL,
-                android.speech.RecognizerIntent.LANGUAGE_MODEL_FREE_FORM
-            )
-            putExtra(android.speech.RecognizerIntent.EXTRA_LANGUAGE, "ar")
-            putExtra(android.speech.RecognizerIntent.EXTRA_PROMPT, "تحدث الآن")
-        }
-
-        try {
-            startActivityForResult(intent, REQUEST_VOICE_INPUT)
-        } catch (_: Exception) {
-            toast("خدمة التعرف الصوتي غير متاحة على هذا الجهاز")
-        }
-    }
-
-    @Deprecated("Deprecated in Android API, retained for broad device compatibility")
-    override fun onActivityResult(
-        requestCode: Int,
-        resultCode: Int,
-        data: Intent?
-    ) {
-        super.onActivityResult(requestCode, resultCode, data)
-
-        if (resultCode != RESULT_OK || data == null) return
-
-        when (requestCode) {
-            REQUEST_VOICE_INPUT -> {
-                val results = data.getStringArrayListExtra(
-                    android.speech.RecognizerIntent.EXTRA_RESULTS
-                )
-                val spokenText = results?.firstOrNull()
-                if (!spokenText.isNullOrBlank()) {
-                    sourceText.setText(spokenText)
-                    showTranslator()
-                    toast("تم إدخال النص الصوتي")
-                }
-            }
-
-            REQUEST_IMPORT_BACKUP -> {
-                data.data?.let { onBackupImported(it) }
-            }
         }
     }
 
     private fun showMore() {
         clearPage("المزيد")
+        addAction("القاموس", true) { showDictionary() }
+        addAction("بطاقات حفظ الكلمات") { showFlashcards() }
+        addAction("البحث في السجل") { showHistorySearch() }
+        addAction("مولّد العبارات") { showPhraseGenerator() }
+        addAction("مولّد الأسماء") { showNameGenerator() }
+        addAction("الإحصائيات") { showStatistics() }
+        addAction("الإعدادات والنسخ الاحتياطي") { showSettings() }
+        addCard { addView(label("ملاحظة: التحويل تقريبي وقد تختلف كتابة الكلمات حسب اللهجة والشخص.", 13f, muted)) }
+    }
 
-        val options = listOf(
-            "القاموس" to { showDictionary() },
-            "بطاقات حفظ الكلمات" to { showFlashcards() },
-            "البحث في سجل الترجمات" to { showHistorySearch() },
-            "مولّد العبارات" to { showPhraseGenerator() },
-            "مولّد الأسماء" to { showNameGenerator() },
-            "الإحصائيات والإنجازات" to { showStatistics() },
-            "الإعدادات والنسخ الاحتياطي" to { showSettings() }
-        )
+    private fun confirmClearData() {
+        AlertDialog.Builder(this).setTitle("حذف البيانات")
+            .setMessage("سيتم حذف السجل والمفضلة والتقدم التعليمي.")
+            .setNegativeButton("إلغاء", null)
+            .setPositiveButton("حذف") { _, _ ->
+                history.clear(); favorites.clear(); completedLessons.clear(); achievements.clear()
+                score = 0; level = 1; streak = 0
+                saveData(); showSettings(); toast("تم حذف البيانات")
+            }.show()
+    }
 
-        options.forEach { option ->
-            actionButton(option.first, true, option.second)
+    private fun exportBackup() {
+        val backup = JSONObject().apply {
+            put("app", "TON FOX"); put("version", 2)
+            put("history", JSONArray().apply { history.forEach { put(it) } })
+            put("favorites", JSONArray().apply { favorites.forEach { put(it) } })
+            put("lessons", JSONArray().apply { completedLessons.forEach { put(it) } })
+            put("score", score); put("level", level); put("streak", streak)
         }
-
-        addCard {
-            label("ملاحظة", 16, gold, true)
-            label(
-                "التحويل إلى فرانكو يعتمد على قواعد كتابة شائعة، وقد تختلف طريقة كتابة بعض الكلمات بين الأشخاص واللهجات.",
-                13,
-                muted
-            )
+        val intent = Intent(Intent.ACTION_SEND).apply {
+            type = "application/json"
+            putExtra(Intent.EXTRA_SUBJECT, "TON FOX Backup")
+            putExtra(Intent.EXTRA_TEXT, backup.toString(2))
         }
+        startActivity(Intent.createChooser(intent, "مشاركة النسخة الاحتياطية"))
+    }
+
+    private fun importBackup() {
+        val intent = Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
+            addCategory(Intent.CATEGORY_OPENABLE); type = "application/json"
+        }
+        try { startActivityForResult(intent, REQUEST_IMPORT_BACKUP) }
+        catch (_: Exception) { toast("تعذر فتح مدير الملفات") }
+    }
+
+    private fun onBackupImported(uri: android.net.Uri) {
+        try {
+            val text = contentResolver.openInputStream(uri)?.bufferedReader()?.use { it.readText() }
+                ?: throw IllegalStateException("تعذر قراءة الملف")
+            val json = JSONObject(text)
+            if (json.optString("app") != "TON FOX") { toast("ملف غير صالح"); return }
+            history.clear(); favorites.clear(); completedLessons.clear()
+            val h = json.optJSONArray("history") ?: JSONArray()
+            for (i in 0 until h.length()) h.optJSONObject(i)?.let { history.add(it) }
+            val f = json.optJSONArray("favorites") ?: JSONArray()
+            for (i in 0 until f.length()) f.optJSONObject(i)?.let { favorites.add(it) }
+            val l = json.optJSONArray("lessons") ?: JSONArray()
+            for (i in 0 until l.length()) completedLessons.add(l.optInt(i))
+            score = json.optInt("score", 0).coerceAtLeast(0)
+            level = json.optInt("level", 1).coerceAtLeast(1)
+            streak = json.optInt("streak", 0).coerceAtLeast(0)
+            saveData(); showHome(); toast("تم استيراد النسخة")
+        } catch (e: Exception) { toast("فشل الاستيراد: ${e.message}") }
+    }
+
+    private fun startVoiceInput() {
+        val intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
+            putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
+            putExtra(RecognizerIntent.EXTRA_LANGUAGE, "ar")
+            putExtra(RecognizerIntent.EXTRA_PROMPT, "تحدث الآن")
+        }
+        try { startActivityForResult(intent, REQUEST_VOICE_INPUT) }
+        catch (_: Exception) { toast("التعرف الصوتي غير متاح") }
+    }
+
+    @Deprecated("Kept for compatibility with older Android versions")
+    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
+        super.onActivityResult(requestCode, resultCode, data)
+        if (resultCode != RESULT_OK || data == null) return
+        when (requestCode) {
+            REQUEST_VOICE_INPUT -> {
+                val spoken = data.getStringArrayListExtra(RecognizerIntent.EXTRA_RESULTS)?.firstOrNull()
+                if (!spoken.isNullOrBlank()) {
+                    showTranslator()
+                    sourceText?.setText(spoken)
+                    toast("تم إدخال النص الصوتي")
+                }
+            }
+            REQUEST_IMPORT_BACKUP -> data.data?.let { onBackupImported(it) }
+        }
+    }
+
+    private fun hideKeyboard(view: View) {
+        (getSystemService(Context.INPUT_METHOD_SERVICE) as InputMethodManager)
+            .hideSoftInputFromWindow(view.windowToken, 0)
+    }
+
+    private fun copyText(text: String) {
+        if (text.isBlank()) { toast("لا يوجد نص لنسخه"); return }
+        val clipboard = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+        clipboard.setPrimaryClip(ClipData.newPlainText("TON FOX", text))
+        toast("تم النسخ")
+    }
+
+    private fun shareText(text: String) {
+        if (text.isBlank()) { toast("لا يوجد نص للمشاركة"); return }
+        val intent = Intent(Intent.ACTION_SEND).apply {
+            type = "text/plain"; putExtra(Intent.EXTRA_TEXT, "$text\n\nTON FOX 🦊")
+        }
+        startActivity(Intent.createChooser(intent, "مشاركة"))
+    }
+
+    private fun toast(message: String) {
+        Toast.makeText(this, message, Toast.LENGTH_SHORT).show()
     }
 
     companion object {
