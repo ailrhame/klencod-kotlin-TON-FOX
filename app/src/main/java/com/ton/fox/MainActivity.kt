@@ -6,20 +6,16 @@ import android.appwidget.AppWidgetManager
 import android.appwidget.AppWidgetProvider
 import android.content.*
 import android.content.pm.PackageManager
-import android.content.pm.ShortcutInfo
-import android.content.pm.ShortcutManager
 import android.content.res.ColorStateList
 import android.content.res.Configuration
 import android.graphics.*
 import android.graphics.drawable.GradientDrawable
-import android.graphics.drawable.Icon
 import android.graphics.drawable.RippleDrawable
 import android.inputmethodservice.InputMethodService
 import android.media.AudioManager
 import android.media.ToneGenerator
 import android.net.Uri
 import android.os.*
-import android.provider.MediaStore
 import android.speech.RecognizerIntent
 import android.speech.tts.TextToSpeech
 import android.text.Editable
@@ -28,15 +24,11 @@ import android.text.TextWatcher
 import android.util.TypedValue
 import android.view.*
 import android.view.animation.DecelerateInterpolator
-import android.view.animation.OvershootInterpolator
-import android.view.inputmethod.EditorInfo
 import android.view.inputmethod.InputConnection
 import android.view.inputmethod.InputMethodManager
 import android.widget.*
 import org.json.JSONArray
 import org.json.JSONObject
-import java.io.File
-import java.io.FileOutputStream
 import java.text.SimpleDateFormat
 import java.util.*
 
@@ -45,7 +37,6 @@ private const val WRAP_CONTENT = ViewGroup.LayoutParams.WRAP_CONTENT
 private const val REQ_VOICE = 9001
 private const val REQ_IMPORT = 9002
 private const val REQ_NOTIFY = 9003
-private const val REQ_CAPTURE_PHOTO = 9005
 private const val CHANNEL_ID_DAILY = "ton_fox_daily_word"
 
 private fun withAlpha(color: Int, alpha: Float): Int {
@@ -58,6 +49,9 @@ data class UserBadge(val id: String, val title: String, val desc: String, val ic
 data class CustomWord(val id: String, val arabic: String, val franco: String, val tags: String = "")
 data class FlashcardState(val word: String, val intervalDays: Int = 0, val easeFactor: Float = 2.5f, val nextReviewAt: Long = 0L, val correctCount: Int = 0, val wrongCount: Int = 0)
 
+// ============================================================
+// [BACKGROUND WORKERS]
+// ============================================================
 object DailyWordScheduler {
     fun schedule(context: Context) {
         val alarm = context.getSystemService(Context.ALARM_SERVICE) as AlarmManager
@@ -110,7 +104,7 @@ class TonFoxWidget : AppWidgetProvider() {
 }
 
 // ============================================================
-// [KEYBOARD SERVICE — Franco Keyboard]
+// [KEYBOARD SERVICE]
 // ============================================================
 class FrancoKeyboardService : InputMethodService() {
     private var isFrancoMode = true
@@ -186,8 +180,6 @@ class FoxAvatarView(context: Context) : View(context) {
         set(value) { field = value; invalidate() }
     var accessory = "none"
         set(value) { field = value; invalidate() }
-    private var offsetY = 0f
-    private var rotation = 0f
 
     fun animateCorrect() {
         animate().rotation(15f).setDuration(100).withEndAction { animate().rotation(-15f).setDuration(100).withEndAction { animate().rotation(0f).setDuration(100).start() }.start() }.start()
@@ -208,17 +200,14 @@ class FoxAvatarView(context: Context) : View(context) {
         val cx = w / 2
         val cy = h / 2
 
-        // Draw a golden circle behind the fox
         paint.color = Color.parseColor("#332B45")
         canvas.drawCircle(cx, cy, w * 0.4f, paint)
 
-        // Draw the Fox Emoji (Size depends on level)
         val size = w * (0.5f + (level.coerceAtMost(20) * 0.01f))
         textPaint.textSize = size
         textPaint.color = Color.WHITE
         canvas.drawText("🦊", cx, cy + (size / 3), textPaint)
 
-        // Draw Accessories
         when (accessory) {
             "hat" -> { textPaint.textSize = size * 0.4f; canvas.drawText("🎩", cx, cy - (size * 0.4f), textPaint) }
             "glasses" -> { textPaint.textSize = size * 0.4f; canvas.drawText("🕶️", cx, cy - (size * 0.1f), textPaint) }
@@ -227,10 +216,11 @@ class FoxAvatarView(context: Context) : View(context) {
     }
 }
 
+// ============================================================
+// [MAIN ACTIVITY]
+// ============================================================
 class MainActivity : Activity(), TextToSpeech.OnInitListener {
-class MainActivity : Activity(), TextToSpeech.OnInitListener {
-    // --- Theme & Colors ---
-    private var themeMode = "dark_gold" // dark_gold, light, amoled
+    private var themeMode = "dark_gold"
     private var colorBg = Color.parseColor("#0B0914")
     private var colorPanel = Color.parseColor("#171324")
     private var colorGold = Color.parseColor("#FFB800")
@@ -238,7 +228,6 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
     private var colorMuted = Color.parseColor("#8A8F9C")
     private var colorBorder = Color.parseColor("#332B45")
 
-    // --- State ---
     private lateinit var prefs: SharedPreferences
     private lateinit var root: FrameLayout
     private lateinit var page: LinearLayout
@@ -258,6 +247,8 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
     private var streakFreeze = 0
     private var currentAccessory = "none"
     private var currentDialect = "العراقية"
+    private var quizAttempts = 0
+    private var quizCorrect = 0
     
     private val history = mutableListOf<JSONObject>()
     private val favorites = mutableListOf<JSONObject>()
@@ -270,7 +261,6 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
     private lateinit var vibrator: Vibrator
     private var toneGen: ToneGenerator? = null
 
-    // --- Dialect Dictionaries ---
     private val dialectDictIraqi = linkedMapOf("شلونك" to "shlonak", "شكو ماكو" to "shako mako", "هسه" to "hassa", "زين" to "zain", "باچر" to "bachir", "وينك" to "wainak", "أريد" to "areed")
     private val dialectDictEgyptian = linkedMapOf("ازيك" to "ezayak", "عامل ايه" to "3amel eh", "كده" to "kda", "معلش" to "ma3lesh", "يعني" to "ya3ni", "كمان" to "kman", "برضه" to "bardu")
     private val dialectDictGulf = linkedMapOf("شلونك" to "shloonk", "وش أخبارك" to "wesh akhbarak", "زين" to "zain", "باجر" to "bacher", "وناسة" to "wnasa", "قواك الله" to "qwak allah")
@@ -326,7 +316,7 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
         ttsReady = status == TextToSpeech.SUCCESS
         if (ttsReady) {
             tts?.setSpeechRate(ttsSpeed)
-            if (prefs.getBoolean("speak_on_open", true)) root.postDelayed({ speakDailyWord() }, 700)
+            if (prefs.getBoolean("speak_on_open", true)) root.postDelayed({ speakDailyWord() }, 1000)
         }
     }
 
@@ -444,7 +434,7 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
                 colorText = Color.parseColor("#FFFFFF"); colorMuted = Color.parseColor("#888888")
                 colorBorder = Color.parseColor("#222222"); colorGold = Color.parseColor("#FFB800")
             }
-            else -> { // dark_gold
+            else -> {
                 colorBg = Color.parseColor("#0B0914"); colorPanel = Color.parseColor("#171324")
                 colorText = Color.parseColor("#F5F5F5"); colorMuted = Color.parseColor("#8A8F9C")
                 colorBorder = Color.parseColor("#332B45"); colorGold = Color.parseColor("#FFB800")
@@ -501,7 +491,6 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
         if (lastOpenDate == yesterday) {
             streakCount++
         } else if (lastOpenDate != "" && streakFreeze > 0) {
-            // استخدم تجميد السلسلة إذا انقطع يوم واحد
             streakFreeze--
             streakCount++
             toast("🧊 تم استخدام تجميد السلسلة! سلسلتك محفوظة.")
@@ -520,7 +509,6 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
         }
     }
 
-    // --- Core Logic: Translation ---
     private fun toFranco(s: String): String {
         personalDictionary.firstOrNull { it.arabic.trim() == s.trim() }?.let { return it.franco }
         val dict = when(currentDialect) {
@@ -549,7 +537,6 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
         return out.toString()
     }
 
-    // --- UI Shell ---
     private fun buildShell() {
         window.statusBarColor = colorBg; window.navigationBarColor = colorBg
         root = FrameLayout(this).apply { setBackgroundColor(colorBg) }
@@ -625,7 +612,6 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
     private fun showHome() {
         clearPage("الرئيسية"); page.tag = "home_tag"; val w = todaysWord()
         
-        // Fox Avatar
         val fox = FoxAvatarView(this)
         fox.level = level
         fox.accessory = currentAccessory
@@ -666,191 +652,91 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
             addView(button("نسخ") { copyText(output.text.toString()) })
         }
     }
-    // ============================================================
-    // [LIVE CHAT — Talk to the Fox]
-    // ============================================================
+
     private fun showChat() {
         clearPage("محادثة الثعلب 💬")
-        page.tag = null
-        
         val chatContainer = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
-        val scrollChat = ScrollView(this).apply { 
-            layoutParams = LinearLayout.LayoutParams(MATCH_PARENT, dp(400))
-            addView(chatContainer)
-        }
+        val scrollChat = ScrollView(this).apply { layoutParams = LinearLayout.LayoutParams(MATCH_PARENT, dp(400)); addView(chatContainer) }
         page.addView(scrollChat)
 
         val inputRow = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL }
-        val input = EditText(this).apply { 
-            hint = "اكتب بالفرانكو..."; setTextColor(colorText); 
-            background = shape(colorBg, 24, colorGold); setPadding(dp(16), dp(12), dp(16), dp(12))
-            layoutParams = LinearLayout.LayoutParams(0, WRAP_CONTENT, 1f).apply { marginEnd = dp(8) }
-        }
+        val input = EditText(this).apply { hint = "اكتب بالفرانكو..."; setTextColor(colorText); background = shape(colorBg, 24, colorGold); setPadding(dp(16), dp(12), dp(16), dp(12)); layoutParams = LinearLayout.LayoutParams(0, WRAP_CONTENT, 1f).apply { marginEnd = dp(8) } }
         val sendBtn = button("إرسال", true) {
             val msg = input.text.toString().trim()
             if (msg.isNotBlank()) {
-                addChatBubble(chatContainer, msg, isFox = false)
-                input.setText("")
-                scrollChat.post { scrollChat.fullScroll(View.FOCUS_DOWN) }
-                
-                // Fox Reply Logic
-                Handler(Looper.getMainLooper()).postDelayed({
-                    val foxReply = generateFoxReply(msg)
-                    addChatBubble(chatContainer, foxReply, isFox = true)
-                    scrollChat.post { scrollChat.fullScroll(View.FOCUS_DOWN) }
-                    score += 5; saveData(); playSound(1)
-                }, 1000)
+                addChatBubble(chatContainer, msg, isFox = false); input.setText(""); scrollChat.post { scrollChat.fullScroll(View.FOCUS_DOWN) }
+                Handler(Looper.getMainLooper()).postDelayed({ addChatBubble(chatContainer, generateFoxReply(msg), isFox = true); scrollChat.post { scrollChat.fullScroll(View.FOCUS_DOWN) }; score += 5; saveData(); playSound(1) }, 1000)
             }
         }
-        inputRow.addView(input)
-        inputRow.addView(sendBtn, LinearLayout.LayoutParams(WRAP_CONTENT, WRAP_CONTENT))
+        inputRow.addView(input); inputRow.addView(sendBtn, LinearLayout.LayoutParams(WRAP_CONTENT, WRAP_CONTENT))
         page.addView(inputRow, LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT).apply { topMargin = dp(16) })
-
-        // Initial message
-        addChatBubble(chatContainer, "أهلاً بك! أنا الثعلب 🦊. كيف حالك اليوم؟ (اكتب shlonak)", isFox = true)
+        addChatBubble(chatContainer, "أهلاً! أنا الثعلب 🦊. كيف حالك؟ (اكتب shlonak)", isFox = true)
     }
 
     private fun addChatBubble(parent: LinearLayout, text: String, isFox: Boolean) {
-        val row = LinearLayout(this).apply { 
-            orientation = LinearLayout.HORIZONTAL; gravity = if (isFox) Gravity.START else Gravity.END
-            setPadding(0, dp(4), 0, dp(4))
-        }
-        val bubble = TextView(this).apply {
-            this.text = text; textSize = 16f; setTextColor(if (isFox) colorBg else colorText)
-            background = shape(if (isFox) colorGold else colorPanel, 16, if (isFox) null else colorBorder)
-            setPadding(dp(16), dp(12), dp(16), dp(12))
-            maxWidth = resources.displayMetrics.widthPixels - dp(100)
-        }
-        row.addView(bubble)
-        parent.addView(row)
+        val row = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = if (isFox) Gravity.START else Gravity.END; setPadding(0, dp(4), 0, dp(4)) }
+        val bubble = TextView(this).apply { this.text = text; textSize = 16f; setTextColor(if (isFox) colorBg else colorText); background = shape(if (isFox) colorGold else colorPanel, 16, if (isFox) null else colorBorder); setPadding(dp(16), dp(12), dp(16), dp(12)); maxWidth = resources.displayMetrics.widthPixels - dp(100) }
+        row.addView(bubble); parent.addView(row)
     }
 
     private fun generateFoxReply(userMsg: String): String {
         val msg = userMsg.lowercase(Locale.ROOT)
         return when {
-            msg.contains("shlonak") || msg.contains("شلونك") -> "أنا بخير، شكراً لسؤالك! (shukran!) +5 XP"
-            msg.contains("shukran") || msg.contains("شكرا") -> "عفواً! (3afwan) استمر في التعلم! +5 XP"
-            msg.contains("7abibi") || msg.contains("حبيبي") -> "أنت رائع أيضاً! (enta ra2e3) +5 XP"
-            else -> {
-                val correct = toFranco(userMsg)
-                if (correct == userMsg) "أحسنت! كتابتك صحيحة. (mumtaz!) +5 XP" 
-                else "محاولة جيدة! لكن الأصح هو: $correct +5 XP"
-            }
+            msg.contains("shlonak") || msg.contains("شلونك") -> "أنا بخير، شكراً! (shukran!) +5 XP"
+            msg.contains("shukran") || msg.contains("شكرا") -> "عفواً! (3afwan) استمر! +5 XP"
+            else -> { val correct = toFranco(userMsg); if (correct == userMsg) "أحسنت! (mumtaz!) +5 XP" else "محاولة جيدة! الأصح: $correct +5 XP" }
         }
     }
 
-    // ============================================================
-    // [MINI GAMES]
-    // ============================================================
     private fun showGames() {
         clearPage("الألعاب المصغرة 🎮")
-        page.tag = null
-        
-        addCard {
-            addView(label("اختر لعبة لتكسب نقاط XP إضافية:", 16f, colorText))
-        }
-        
+        addCard { addView(label("اختر لعبة لتكسب XP:", 16f, colorText)) }
         addAction("🔤 مطابقة الحروف بالأرقام", true) { playGameMatch() }
-        addAction("⏱️ سباق الكتابة ضد الوقت", true) { playGameRace() }
+        addAction("⏱️ سباق الكتابة", true) { playGameRace() }
         addAction("📝 الكلمة الناقصة", true) { playGameMissing() }
     }
 
     private fun playGameMatch() {
-        val pairs = listOf("ع" to "3", "ح" to "7", "خ" to "5", "ط" to "6", "ص" to "9")
-        val pair = pairs.random()
+        val pair = listOf("ع" to "3", "ح" to "7", "خ" to "5", "ط" to "6", "ص" to "9").random()
         clearPage("لعبة المطابقة")
-        
         addCard {
-            addView(label("ما هو الرقم المقابل لحرف «${pair.first}»؟", 22f, colorGold, true))
-            val choices = listOf(pair.second, "2", "4", "8").shuffled()
-            choices.forEach { c ->
-                addView(button(c) {
-                    if (c == pair.second) { score += 15; saveData(); playSound(2); toast("✔ صحيح! +15 XP"); showGames() }
-                    else { playSound(3); toast("✗ خطأ، الإجابة هي ${pair.second}"); showGames() }
-                })
-            }
+            addView(label("الرقم المقابل لـ «${pair.first}»؟", 22f, colorGold, true))
+            listOf(pair.second, "2", "4", "8").shuffled().forEach { c -> addView(button(c) { if (c == pair.second) { score += 15; saveData(); playSound(2); toast("✔ +15 XP"); showGames() } else { playSound(3); toast("✗ الإجابة: ${pair.second}"); showGames() } }) }
         }
     }
 
     private fun playGameRace() {
         clearPage("سباق الكتابة")
-        val words = listOf("shlonak", "saba7 elkhair", "shukran", "7abibi", "eshta2tellak")
-        val target = words.random()
-        
+        val target = listOf("shlonak", "saba7 elkhair", "shukran", "7abibi", "eshta2tellak").random()
         addCard {
-            addView(label("اكتب هذه الكلمة بالفرانكو بأسرع وقت:", 16f, colorMuted))
-            addView(label(target, 28f, colorGold, true))
-            
-            val input = EditText(this@MainActivity).apply { background = shape(colorBg, 10, colorBorder); setTextColor(colorText) }
-            addView(input)
-            
-            addView(button("تحقق", true) {
-                if (input.text.toString().trim() == target) {
-                    score += 20; saveData(); playSound(2); toast("⚡ سريع! +20 XP"); showGames()
-                } else {
-                    playSound(3); toast("✗ حاول مجدداً")
-                }
-            })
+            addView(label("اكتب الكلمة بأسرع وقت:", 16f, colorMuted)); addView(label(target, 28f, colorGold, true))
+            val input = EditText(this@MainActivity).apply { background = shape(colorBg, 10, colorBorder); setTextColor(colorText) }; addView(input)
+            addView(button("تحقق", true) { if (input.text.toString().trim() == target) { score += 20; saveData(); playSound(2); toast("⚡ +20 XP"); showGames() } else { playSound(3); toast("✗ خطأ") } })
         }
     }
 
     private fun playGameMissing() {
         clearPage("الكلمة الناقصة")
         addCard {
-            addView(label("أكمل الفراغ:", 16f, colorMuted))
-            addView(label("ش_ونك (كيف حالك)", 24f, colorGold, true))
-            val choices = listOf("ل", "ب", "م", "ت").shuffled()
-            choices.forEach { c ->
-                addView(button(c) {
-                    if (c == "ل") { score += 10; saveData(); playSound(2); toast("✔ صحيح! +10 XP"); showGames() }
-                    else { playSound(3); toast("✗ خطأ") }
-                })
-            }
+            addView(label("أكمل الفراغ:", 16f, colorMuted)); addView(label("ش_ونك (كيف حالك)", 24f, colorGold, true))
+            listOf("ل", "ب", "م", "ت").shuffled().forEach { c -> addView(button(c) { if (c == "ل") { score += 10; saveData(); playSound(2); toast("✔ +10 XP"); showGames() } else { playSound(3); toast("✗ خطأ") } }) }
         }
     }
 
-    // ============================================================
-    // [DIALECT DICTIONARY]
-    // ============================================================
     private fun showDialects() {
         clearPage("قاموس اللهجات 🗣️")
-        page.tag = null
-        
-        val search = EditText(this).apply {
-            hint = "ابحث عن كلمة عربية..."; setTextColor(colorText)
-            background = shape(colorPanel, 12, colorGold); setPadding(dp(14), dp(14), dp(14), dp(14))
-        }
+        val search = EditText(this).apply { hint = "ابحث..."; setTextColor(colorText); background = shape(colorPanel, 12, colorGold); setPadding(dp(14), dp(14), dp(14), dp(14)) }
         page.addView(search, LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT).apply { bottomMargin = dp(10) })
-        
-        val results = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
-        page.addView(results)
-        
+        val results = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }; page.addView(results)
         fun render(q: String) {
             results.removeAllViews()
-            val allKeys = (dialectDictIraqi.keys + dialectDictEgyptian.keys + dialectDictGulf.keys + dialectDictLevantine.keys).toSet()
-            val filtered = allKeys.filter { it.contains(q, true) }
-            
-            if (filtered.isEmpty()) {
-                results.addView(label("لا نتائج", 15f, colorMuted))
-            }
-            
-            filtered.forEach { word ->
-                val c = card()
-                c.addView(label(word, 20f, colorGold, true))
-                val iraqi = dialectDictIraqi[word] ?: "—"
-                val egyptian = dialectDictEgyptian[word] ?: "—"
-                val gulf = dialectDictGulf[word] ?: "—"
-                val levantine = dialectDictLevantine[word] ?: "—"
-                
-                c.addView(label("🇮🇶 العراقية: $iraqi", 15f))
-                c.addView(label("🇪🇬 المصرية: $egyptian", 15f))
-                c.addView(label("🇸🇦 الخليجية: $gulf", 15f))
-                c.addView(label("🇱🇧 الشامية: $levantine", 15f))
-                c.addView(button("📋 نسخ العراقية") { copyText(iraqi) })
-                results.addView(c, LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT).apply { bottomMargin = dp(10) })
+            (dialectDictIraqi.keys + dialectDictEgyptian.keys + dialectDictGulf.keys + dialectDictLevantine.keys).filter { it.contains(q, true) }.forEach { word ->
+                val c = card(); c.addView(label(word, 20f, colorGold, true))
+                c.addView(label("🇮🇶 ${dialectDictIraqi[word] ?: "—"}", 15f)); c.addView(label("🇪🇬 ${dialectDictEgyptian[word] ?: "—"}", 15f))
+                c.addView(label("🇸🇦 ${dialectDictGulf[word] ?: "—"}", 15f)); c.addView(label("🇱🇧 ${dialectDictLevantine[word] ?: "—"}", 15f))
+                c.addView(button("📋 نسخ") { copyText(dialectDictIraqi[word] ?: "") }); results.addView(c, LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT).apply { bottomMargin = dp(10) })
             }
         }
-        
         search.addTextChangedListener(object : TextWatcher {
             override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) {}
             override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) { render(s?.toString().orEmpty()) }
@@ -859,16 +745,59 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
         render("")
     }
 
-    // ============================================================
-    // [SRS FLASHCARDS — 3D Flip / Swipe (Simplified UI)
-    // ============================================================
+    private fun showAcademy() {
+        clearPage("الأكاديمية")
+        addCard { addView(label("المستوى $level · $score XP · ${completed.size}/${lessons.size}", 14f, colorMuted)) }
+        lessons.forEach { l ->
+            addCard {
+                addView(label("${if (completed.contains(l.id)) "✓" else "○"} الدرس ${l.id + 1}: ${l.title}", 17f, colorGold, true))
+                addView(label(l.desc, 14f, colorMuted)); addView(button("فتح") { showLesson(l.id) })
+            }
+        }
+        addAction("🧪 اختبار شامل", true) { startQuiz(-1) }
+    }
+
+    private fun showLesson(i: Int) {
+        val l = lessons[i]; clearPage(l.title)
+        addCard { addView(label("الدرس ${i + 1}", 14f, colorGold, true)); addView(label(l.desc, 15f)); l.lines.forEach { addView(label(it, 15f)) } }
+        val answer = EditText(this).apply { hint = "اكتب التحويل"; setTextColor(colorText); background = shape(colorBg, 12, colorGold); setPadding(dp(14), dp(14), dp(14), dp(14)) }
+        addCard {
+            addView(label("تدريب: ${l.ar}", 20f, colorGold, true)); addView(answer)
+            addView(button("تحقق", true) {
+                if (answer.text.toString().replace(" ", "").lowercase() == l.fr.replace(" ", "").lowercase()) {
+                    if (completed.add(i)) { score += 20; saveData(); playSound(2); toast("✔ +20 XP") }
+                    showLesson(i)
+                } else { playSound(3); toast("حاول مجدداً: ${l.fr}") }
+            })
+        }
+        addAction("العودة", true) { showAcademy() }
+    }
+
+    private fun startQuiz(lessonIndex: Int) {
+        val qs = if (lessonIndex >= 0) listOf(lessons[lessonIndex]) else lessons.shuffled().take(5)
+        var pos = 0; var correct = 0; quizAttempts++
+        fun next() {
+            if (pos >= qs.size) {
+                score += correct * 10; quizCorrect += correct; checkLevelUp(); saveData(); playSound(2)
+                clearPage("النتيجة"); addCard { addView(label("انتهى الاختبار!", 22f, colorGold, true)); addView(label("صحيحة: $correct/${qs.size}", 16f)) }
+                addAction("العودة", true) { showAcademy() }; return
+            }
+            val l = qs[pos]; val expected = toFranco(l.ar)
+            clearPage("السؤال ${pos + 1}/${qs.size}")
+            addCard {
+                addView(label(l.ar, 24f, colorGold, true))
+                (listOf(expected) + lessons.filter { it != l }.map { toFranco(it.ar) }.shuffled().take(3)).distinct().shuffled().forEach { c ->
+                    addView(button(c) { if (c == expected) { correct++; playSound(2) } else playSound(3); pos++; next() })
+                }
+            }
+        }
+        next()
+    }
+
     private fun showFlashcards() {
         clearPage("بطاقات SRS 🧠")
-        page.tag = null
-        
         val allWords = dictionary.keys.toList()
         val due = allWords.filter { !flashcardStates.containsKey(it) || (flashcardStates[it]?.nextReviewAt ?: 0) <= System.currentTimeMillis() }
-        
         if (due.isEmpty()) {
             addCard { 
                 addView(label("✨ لا توجد بطاقات مستحقة الآن!", 18f, colorGold, true))
@@ -876,7 +805,6 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
             }
             return
         }
-        
         addCard {
             addView(label("📚 لديك ${due.size} كلمة مستحقة للمراجعة", 16f, colorText))
             addView(button("▶️ ابدأ الآن", true) { startFlashcardSession(due.take(20)) })
@@ -887,7 +815,6 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
         if (words.isEmpty()) return
         var pos = 0
         var correct = 0
-        
         fun next() {
             if (pos >= words.size) {
                 val earned = correct * 10
@@ -901,12 +828,9 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
                 addAction("العودة", true) { showFlashcards() }
                 return
             }
-            
             val word = words[pos]
             val franco = toFranco(word)
             clearPage("بطاقة ${pos + 1}/${words.size}")
-            
-            // 3D flip simulation
             var isFlipped = false
             val cardView = card()
             val qView = label(word, 32f, colorGold, true)
@@ -945,13 +869,8 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
         next()
     }
 
-    // ============================================================
-    // [FOX PROFILE & ACCESSORIES]
-    // ============================================================
     private fun showFoxProfile() {
         clearPage("بروفايل الثعلب 🦊")
-        page.tag = null
-        
         val fox = FoxAvatarView(this)
         fox.level = level
         fox.accessory = currentAccessory
@@ -965,8 +884,6 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
         
         addCard {
             addView(label("🛍️ متجر الإكسسوارات", 18f, colorGold, true))
-            addView(label("غيّر مظهر ثعلبك:", 14f, colorMuted))
-            
             fun buyAccessory(id: String, name: String, cost: Int) {
                 if (currentAccessory == id) { toast("مُجهز بالفعل"); return }
                 if (score >= cost) {
@@ -975,18 +892,15 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
                     }.setNegativeButton("إلغاء", null).show()
                 } else toast("لا تملك نقاط كافية")
             }
-            
-            addView(button("🎩 قبعة أنيقة (500 XP)") { buyAccessory("hat", "قبعة", 500) })
-            addView(button("🕶️ نظارات شمسية (1000 XP)") { buyAccessory("glasses", "نظارات", 1000) })
-            addView(button("👑 تاج ملكي (2500 XP)") { buyAccessory("crown", "تاج", 2500) })
-            if (currentAccessory != "none") {
-                addView(button("❌ إزالة الإكسسوار", false) { currentAccessory = "none"; saveData(); showFoxProfile() })
-            }
+            addView(button("🎩 قبعة (500 XP)") { buyAccessory("hat", "قبعة", 500) })
+            addView(button("🕶️ نظارات (1000 XP)") { buyAccessory("glasses", "نظارات", 1000) })
+            addView(button("👑 تاج (2500 XP)") { buyAccessory("crown", "تاج", 2500) })
+            if (currentAccessory != "none") addView(button("❌ إزالة") { currentAccessory = "none"; saveData(); showFoxProfile() })
         }
         
         addCard {
             addView(label("🧊 تجميد السلسلة (Streak Freeze)", 18f, colorGold, true))
-            addView(label("يحمي سلسلتك ليوم واحد إذا نسيت الدخول. (لديك $streakFreeze)", 14f, colorMuted))
+            addView(label("يحمي سلسلتك ليوم واحد. (لديك $streakFreeze)", 14f, colorMuted))
             addView(button("شراء تجميد (200 XP)", true) {
                 if (score >= 200) { score -= 200; streakFreeze++; saveData(); playSound(2); showFoxProfile() }
                 else toast("تحتاج 200 XP")
@@ -994,48 +908,29 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
         }
     }
 
-    // ============================================================
-    // [SETTINGS]
-    // ============================================================
     private fun showSettings() {
         clearPage("الإعدادات")
-        page.tag = null
-        
         addCard {
             addView(label("🎨 المظهر والثيم", 17f, colorGold, true))
-            val themes = listOf("dark_gold" to "داكن ذهبي", "light" to "فاتح", "amoled" to "AMOLED أسود")
-            themes.forEach { (id, name) ->
+            listOf("dark_gold" to "داكن ذهبي", "light" to "فاتح", "amoled" to "AMOLED أسود").forEach { (id, name) ->
                 addView(button(if (themeMode == id) "✓ $name" else name) {
                     themeMode = id; saveSetting("theme_mode", id); applyTheme(); buildShell(); showSettings()
                 })
             }
         }
-        
         addCard {
             addView(label("🗣️ اللهجة الافتراضية", 17f, colorGold, true))
-            val dialects = listOf("العراقية", "المصرية", "الخليجية", "الشامية")
-            dialects.forEach { d ->
-                addView(button(if (currentDialect == d) "✓ $d" else d) {
-                    currentDialect = d; saveSetting("dialect", d); showSettings()
-                })
+            listOf("العراقية", "المصرية", "الخليجية", "الشامية").forEach { d ->
+                addView(button(if (currentDialect == d) "✓ $d" else d) { currentDialect = d; saveSetting("dialect", d); showSettings() })
             }
         }
-        
         addCard {
             addView(label("⌨️ لوحة المفاتيح", 17f, colorGold, true))
-            addView(label("لتفعيل لوحة مفاتيح TON FOX، اذهب إلى إعدادات النظام > اللغة والإدخال > لوحة المفاتيح الحالية > اختر TON FOX.", 13f, colorMuted))
-            addView(button("فتح إعدادات لوحة المفاتيح") {
-                startActivity(Intent(android.provider.Settings.ACTION_INPUT_METHOD_SETTINGS))
-            })
+            addView(label("لتفعيل لوحة TON FOX، اذهب إلى إعدادات النظام > اللغة > لوحة المفاتيح.", 13f, colorMuted))
+            addView(button("فتح الإعدادات") { startActivity(Intent(android.provider.Settings.ACTION_INPUT_METHOD_SETTINGS)) })
         }
-        
         addCard {
-            addView(label("💾 النسخ الاحتياطي", 17f, colorGold, true))
-            addView(button("📤 تصدير", true) { 
-                val json = JSONObject().apply { put("app", "TON FOX"); put("score", score); put("level", level); put("streak", streakCount) }
-                val send = Intent(Intent.ACTION_SEND).apply { type = "application/json"; putExtra(Intent.EXTRA_TEXT, json.toString()) }
-                startActivity(Intent.createChooser(send, "مشاركة"))
-            })
+            addView(label("💾 البيانات", 17f, colorGold, true))
             addView(button("🗑️ حذف جميع البيانات") {
                 AlertDialog.Builder(this@MainActivity).setTitle("تأكيد").setMessage("سيتم مسح كل شيء!").setPositiveButton("حذف") { _, _ ->
                     prefs.edit().clear().apply(); score = 0; level = 1; streakCount = 0; history.clear(); saveData(); showHome()
