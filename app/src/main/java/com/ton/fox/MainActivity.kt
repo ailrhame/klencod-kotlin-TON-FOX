@@ -781,7 +781,7 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
             addView(label("اكتب هذه الكلمة بالفرانكو بأسرع وقت:", 16f, colorMuted))
             addView(label(target, 28f, colorGold, true))
             
-            val input = EditText(this).apply { background = shape(colorBg, 10, colorBorder); setTextColor(colorText) }
+            val input = EditText(this@MainActivity).apply { background = shape(colorBg, 10, colorBorder); setTextColor(colorText) }
             addView(input)
             
             addView(button("تحقق", true) {
@@ -970,7 +970,7 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
             fun buyAccessory(id: String, name: String, cost: Int) {
                 if (currentAccessory == id) { toast("مُجهز بالفعل"); return }
                 if (score >= cost) {
-                    AlertDialog.Builder(this).setTitle("شراء $name").setMessage("سيتم خصم $cost XP.").setPositiveButton("شراء") { _, _ ->
+                    AlertDialog.Builder(this@MainActivity).setTitle("شراء $name").setMessage("سيتم خصم $cost XP.").setPositiveButton("شراء") { _, _ ->
                         score -= cost; currentAccessory = id; saveData(); playSound(2); showFoxProfile()
                     }.setNegativeButton("إلغاء", null).show()
                 } else toast("لا تملك نقاط كافية")
@@ -1037,7 +1037,7 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
                 startActivity(Intent.createChooser(send, "مشاركة"))
             })
             addView(button("🗑️ حذف جميع البيانات") {
-                AlertDialog.Builder(this).setTitle("تأكيد").setMessage("سيتم مسح كل شيء!").setPositiveButton("حذف") { _, _ ->
+                AlertDialog.Builder(this@MainActivity).setTitle("تأكيد").setMessage("سيتم مسح كل شيء!").setPositiveButton("حذف") { _, _ ->
                     prefs.edit().clear().apply(); score = 0; level = 1; streakCount = 0; history.clear(); saveData(); showHome()
                 }.setNegativeButton("إلغاء", null).show()
             })
