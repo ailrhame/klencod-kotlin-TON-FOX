@@ -39,7 +39,7 @@ private const val WRAP_CONTENT = ViewGroup.LayoutParams.WRAP_CONTENT
 private const val REQ_VOICE = 9001
 private const val REQ_IMPORT = 9002
 private const val REQ_NOTIFY = 9003
-private const val REQ_PICK_KB_BG = 9006 // Request code for keyboard background image
+private const val REQ_PICK_KB_BG = 9006
 private const val CHANNEL_ID_DAILY = "ton_fox_daily_word"
 
 private fun withAlpha(color: Int, alpha: Float): Int {
@@ -53,22 +53,32 @@ data class CustomWord(val id: String, val arabic: String, val franco: String, va
 data class FlashcardState(val word: String, val intervalDays: Int = 0, val easeFactor: Float = 2.5f, val nextReviewAt: Long = 0L, val correctCount: Int = 0, val wrongCount: Int = 0)
 
 // ============================================================
-// [KEYBOARD SERVICE — Fully Customizable Arabic/English Keyboard]
+// [KEYBOARD SERVICE — Arabic to Franco Keyboard]
 // ============================================================
 class FrancoKeyboardService : InputMethodService() {
-    private var isArabic = true
-    private lateinit var prefs: SharedPreferences
+    private var isFrancoMode = true 
+    private var prefs: SharedPreferences? = null
+
+    private val arabicToFranco = mapOf(
+        "ض" to "9'", "ص" to "9", "ث" to "th", "ق" to "q", "ف" to "f",
+        "غ" to "gh", "ع" to "3", "ه" to "h", "خ" to "kh", "ح" to "7",
+        "ج" to "j", "چ" to "ch", "ش" to "sh", "س" to "s", "ي" to "y",
+        "ب" to "b", "ل" to "l", "ا" to "a", "ت" to "t", "ن" to "n",
+        "م" to "m", "ك" to "k", "ط" to "6", "ئ" to "2", "ء" to "2",
+        "ؤ" to "2", "ر" to "r", "لا" to "la", "ى" to "a", "ة" to "a",
+        "و" to "w", "ز" to "z", "ظ" to "6'"
+    )
 
     private fun dp(v: Int): Int = (v * resources.displayMetrics.density).toInt()
 
     override fun onCreateInputView(): View {
         prefs = getSharedPreferences("ton_fox_data", Context.MODE_PRIVATE)
+        
         val root = FrameLayout(this)
-
-        // 1. إعداد الخلفية (لون أو صورة)
-        val bgType = prefs.getString("kb_bg_type", "dark") ?: "dark"
+        val bgType = prefs?.getString("kb_bg_type", "dark") ?: "dark"
+        
         if (bgType == "image") {
-            val uriString = prefs.getString("kb_bg_uri", null)
+            val uriString = prefs?.getString("kb_bg_uri", null)
             if (uriString != null) {
                 try {
                     val uri = Uri.parse(uriString)
@@ -91,43 +101,39 @@ class FrancoKeyboardService : InputMethodService() {
         }
         root.addView(mainLayout, FrameLayout.LayoutParams(MATCH_PARENT, MATCH_PARENT))
 
-        // 2. تحديد حجم الكيبورد (ارتفاع الأزرار)
-        val kbSize = prefs.getString("kb_size", "medium") ?: "medium"
+        val kbSize = prefs?.getString("kb_size", "large") ?: "large"
         val keyHeight = when(kbSize) {
-            "small" -> dp(45)
-            "large" -> dp(75)
-            else -> dp(60) // medium
+            "small" -> dp(50)
+            "medium" -> dp(65)
+            else -> dp(80) 
         }
 
-        // 3. تحديد شكل الأزرار
-        val kbStyle = prefs.getString("kb_style", "rounded") ?: "rounded"
+        val kbStyle = prefs?.getString("kb_style", "rounded") ?: "rounded"
         val keyRadius = when(kbStyle) {
             "square" -> 0f
             "capsule" -> keyHeight.toFloat() / 2f
-            else -> dp(8).toFloat() // rounded
+            else -> dp(8).toFloat()
         }
 
-        // شريط الحالة العلوي + زر التبديل
+        val isLight = bgType == "light"
+        val keyColor = if (isLight) Color.parseColor("#FFFFFF") else Color.parseColor("#171324")
+        val keyTextColor = if (isLight) Color.parseColor("#0B0914") else Color.WHITE
+
         val header = TextView(this).apply {
-            text = if (isArabic) "⌨️ TON FOX: العربية" else "⌨️ TON FOX: English"
+            text = if (isFrancoMode) "⌨️ TON FOX: عربي ➔ فرانكو" else "⌨️ TON FOX: English"
             setTextColor(Color.parseColor("#FFB800"))
             textSize = 14f
             gravity = Gravity.CENTER
             setPadding(0, dp(8), 0, dp(8))
             background = GradientDrawable().apply { setColor(Color.parseColor("#80000000")); cornerRadius = dp(8).toFloat() }
             setOnClickListener {
-                isArabic = !isArabic
+                isFrancoMode = !isFrancoMode
                 setInputView(onCreateInputView())
             }
         }
         mainLayout.addView(header, LinearLayout.LayoutParams(MATCH_PARENT, dp(40)).apply { bottomMargin = dp(4) })
 
-        val isLight = bgType == "light"
-        val keyColor = if (isLight) Color.parseColor("#FFFFFF") else Color.parseColor("#171324")
-        val keyTextColor = if (isLight) Color.parseColor("#0B0914") else Color.WHITE
-
-        // بناء الأزرار
-        val rows = if (isArabic) {
+        val rows = if (isFrancoMode) {
             listOf(
                 listOf("ض", "ص", "ث", "ق", "ف", "غ", "ع", "ه", "خ", "ح", "ج", "چ"),
                 listOf("ش", "س", "ي", "ب", "ل", "ا", "ت", "ن", "م", "ك", "ط"),
@@ -150,7 +156,7 @@ class FrancoKeyboardService : InputMethodService() {
                 val isSpecial = key == "⇧" || key == "⌫"
                 val btn = TextView(this).apply {
                     text = key
-                    textSize = if(kbSize == "large") 24f else 20f
+                    textSize = if(kbSize == "large") 26f else 20f
                     setTextColor(if (isSpecial) Color.parseColor("#FFB800") else keyTextColor)
                     gravity = Gravity.CENTER
                     background = GradientDrawable().apply { 
@@ -167,7 +173,6 @@ class FrancoKeyboardService : InputMethodService() {
             mainLayout.addView(rowLayout)
         }
 
-        // الصف السفلي
         val bottomRow = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             layoutParams = LinearLayout.LayoutParams(MATCH_PARENT, keyHeight)
@@ -175,7 +180,7 @@ class FrancoKeyboardService : InputMethodService() {
         
         val spaceBtn = TextView(this).apply {
             text = "مسافة"
-            textSize = 16f
+            textSize = 18f
             setTextColor(keyTextColor)
             gravity = Gravity.CENTER
             background = GradientDrawable().apply { setColor(keyColor); cornerRadius = keyRadius }
@@ -186,7 +191,7 @@ class FrancoKeyboardService : InputMethodService() {
         
         val enterBtn = TextView(this).apply {
             text = "إرسال ⏎"
-            textSize = 16f
+            textSize = 18f
             setTextColor(Color.parseColor("#0B0914"))
             gravity = Gravity.CENTER
             background = GradientDrawable().apply { setColor(Color.parseColor("#FFB800")); cornerRadius = keyRadius }
@@ -209,8 +214,15 @@ class FrancoKeyboardService : InputMethodService() {
         val ic = currentInputConnection ?: return
         when (key) {
             "⌫" -> ic.deleteSurroundingText(1, 0)
-            "⇧" -> { /* Shift logic here */ }
-            else -> ic.commitText(key, 1)
+            "⇧" -> { /* Shift logic */ }
+            else -> {
+                if (isFrancoMode) {
+                    val francoEquivalent = arabicToFranco[key] ?: key
+                    ic.commitText(francoEquivalent, 1)
+                } else {
+                    ic.commitText(key, 1)
+                }
+            }
         }
     }
 }
@@ -345,7 +357,6 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
     private lateinit var vibrator: Vibrator
     private var toneGen: ToneGenerator? = null
 
-    // Dictionaries
     private val dialectDictIraqi = linkedMapOf("شلونك" to "shlonak", "شكو ماكو" to "shako mako", "هسه" to "hassa", "زين" to "zain", "باچر" to "bachir", "وينك" to "wainak", "أريد" to "areed")
     private val dialectDictEgyptian = linkedMapOf("ازيك" to "ezayak", "عامل ايه" to "3amel eh", "كده" to "kda", "معلش" to "ma3lesh", "يعني" to "ya3ni", "كمان" to "kman", "برضه" to "bardu")
     private val dialectDictGulf = linkedMapOf("شلونك" to "shloonk", "وش أخبارك" to "wesh akhbarak", "زين" to "zain", "باجر" to "bacher", "وناسة" to "wnasa", "قواك الله" to "qwak allah")
@@ -690,7 +701,6 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
     private fun showHome() {
         clearPage("الرئيسية"); page.tag = "home_tag"; val w = todaysWord()
         
-        // تصغير حجم الثعلب في الرئيسية (120dp)
         val fox = FoxAvatarView(this)
         fox.level = level
         fox.accessory = currentAccessory
@@ -875,89 +885,92 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
         }
         next()
     }
-private fun showFlashcards() {
-    clearPage("بطاقات SRS 🧠")
-    val allWords = dictionary.keys.toList()
-    val due = allWords.filter { !flashcardStates.containsKey(it) || (flashcardStates[it]?.nextReviewAt ?: 0) <= System.currentTimeMillis() }
-    
-    if (due.isEmpty()) {
-        addCard { 
-            addView(label("✨ لا توجد بطاقات مستحقة الآن!", 18f, colorGold, true))
-            addView(button("🎲 مراجعة عشوائية", true) { startFlashcardSession(allWords.shuffled().take(5)) })
-        }
-        return
-    }
-    
-    addCard {
-        addView(label("📚 لديك ${due.size} كلمة مستحقة للمراجعة", 16f, colorText))
-        addView(button("▶️ ابدأ الآن", true) { startFlashcardSession(due.take(20)) })
-    }
-}
 
-private fun startFlashcardSession(words: List<String>) {
-    if (words.isEmpty()) return
-    var pos = 0
-    var correct = 0
-    
-    fun next() {
-        if (pos >= words.size) {
-            val earned = correct * 10
-            score += earned; saveData(); playSound(2)
-            clearPage("انتهت المراجعة")
-            addCard {
-                addView(label("✅ انتهت المراجعة!", 22f, colorGold, true))
-                addView(label("صحيحة: $correct/${words.size}", 16f))
-                addView(label("+$earned XP", 18f, colorGold, true))
+    // ============================================================
+    // [SRS FLASHCARDS]
+    // ============================================================
+    private fun showFlashcards() {
+        clearPage("بطاقات SRS 🧠")
+        val allWords = dictionary.keys.toList()
+        val due = allWords.filter { !flashcardStates.containsKey(it) || (flashcardStates[it]?.nextReviewAt ?: 0) <= System.currentTimeMillis() }
+        
+        if (due.isEmpty()) {
+            addCard { 
+                addView(label("✨ لا توجد بطاقات مستحقة الآن!", 18f, colorGold, true))
+                addView(button("🎲 مراجعة عشوائية", true) { startFlashcardSession(allWords.shuffled().take(5)) })
             }
-            addAction("العودة", true) { showFlashcards() }
             return
         }
         
-        val word = words[pos]
-        val franco = toFranco(word)
-        clearPage("بطاقة ${pos + 1}/${words.size}")
-        
-        // تأثير القلب ثلاثي الأبعاد
-        var isFlipped = false
-        val cardView = card()
-        val qView = label(word, 32f, colorGold, true)
-        qView.gravity = Gravity.CENTER
-        val aView = label(franco, 32f, colorText, true)
-        aView.gravity = Gravity.CENTER
-        aView.visibility = View.GONE
-        
-        cardView.addView(qView)
-        cardView.addView(aView)
-        cardView.setOnClickListener {
-            isFlipped = !isFlipped
-            cardView.animate().rotationY(90f).setDuration(150).withEndAction {
-                qView.visibility = if (isFlipped) View.GONE else View.VISIBLE
-                aView.visibility = if (isFlipped) View.VISIBLE else View.GONE
-                cardView.rotationY = -90f
-                cardView.animate().rotationY(0f).setDuration(150).start()
-            }.start()
-        }
-        page.addView(cardView)
-        
         addCard {
-            addView(button("✓ تذكرت", true) {
-                val s = flashcardStates[word] ?: FlashcardState(word)
-                val nextInt = if (s.intervalDays == 0) 1 else (s.intervalDays * s.easeFactor).toInt().coerceIn(1, 365)
-                flashcardStates[word] = s.copy(intervalDays = nextInt, nextReviewAt = System.currentTimeMillis() + nextInt * 24L * 3600 * 1000)
-                correct++; pos++; next()
-            })
-            addView(button("✗ نسيت") {
-                val s = flashcardStates[word] ?: FlashcardState(word)
-                flashcardStates[word] = s.copy(intervalDays = 1, nextReviewAt = System.currentTimeMillis() + 24L * 3600 * 1000)
-                pos++; next()
-            })
+            addView(label("📚 لديك ${due.size} كلمة مستحقة للمراجعة", 16f, colorText))
+            addView(button("▶️ ابدأ الآن", true) { startFlashcardSession(due.take(20)) })
         }
     }
-    next()
-}
+
+    private fun startFlashcardSession(words: List<String>) {
+        if (words.isEmpty()) return
+        var pos = 0
+        var correct = 0
+        
+        fun next() {
+            if (pos >= words.size) {
+                val earned = correct * 10
+                score += earned; saveData(); playSound(2)
+                clearPage("انتهت المراجعة")
+                addCard {
+                    addView(label("✅ انتهت المراجعة!", 22f, colorGold, true))
+                    addView(label("صحيحة: $correct/${words.size}", 16f))
+                    addView(label("+$earned XP", 18f, colorGold, true))
+                }
+                addAction("العودة", true) { showFlashcards() }
+                return
+            }
+            
+            val word = words[pos]
+            val franco = toFranco(word)
+            clearPage("بطاقة ${pos + 1}/${words.size}")
+            
+            var isFlipped = false
+            val cardView = card()
+            val qView = label(word, 32f, colorGold, true)
+            qView.gravity = Gravity.CENTER
+            val aView = label(franco, 32f, colorText, true)
+            aView.gravity = Gravity.CENTER
+            aView.visibility = View.GONE
+            
+            cardView.addView(qView)
+            cardView.addView(aView)
+            cardView.setOnClickListener {
+                isFlipped = !isFlipped
+                cardView.animate().rotationY(90f).setDuration(150).withEndAction {
+                    qView.visibility = if (isFlipped) View.GONE else View.VISIBLE
+                    aView.visibility = if (isFlipped) View.VISIBLE else View.GONE
+                    cardView.rotationY = -90f
+                    cardView.animate().rotationY(0f).setDuration(150).start()
+                }.start()
+            }
+            page.addView(cardView)
+            
+            addCard {
+                addView(button("✓ تذكرت", true) {
+                    val s = flashcardStates[word] ?: FlashcardState(word)
+                    val nextInt = if (s.intervalDays == 0) 1 else (s.intervalDays * s.easeFactor).toInt().coerceIn(1, 365)
+                    flashcardStates[word] = s.copy(intervalDays = nextInt, nextReviewAt = System.currentTimeMillis() + nextInt * 24L * 3600 * 1000)
+                    correct++; pos++; next()
+                })
+                addView(button("✗ نسيت") {
+                    val s = flashcardStates[word] ?: FlashcardState(word)
+                    flashcardStates[word] = s.copy(intervalDays = 1, nextReviewAt = System.currentTimeMillis() + 24L * 3600 * 1000)
+                    pos++; next()
+                })
+            }
+        }
+        next()
+    }
+
     private fun showFoxProfile() {
         clearPage("بروفايل الثعلب 🦊")
-        // تصغير حجم الثعلب في البروفايل (150dp)
         val fox = FoxAvatarView(this)
         fox.level = level
         fox.accessory = currentAccessory
@@ -1005,10 +1018,9 @@ private fun startFlashcardSession(words: List<String>) {
         addCard {
             addView(label("⌨️ إعدادات لوحة المفاتيح", 18f, colorGold, true))
             
-            // الحجم
             addView(label("حجم الكيبورد:", 14f, colorMuted))
             val sizeRow = LinearLayout(this@MainActivity).apply { orientation = LinearLayout.HORIZONTAL; setPadding(0, dp(4), 0, dp(12)) }
-            val currentSize = prefs.getString("kb_size", "medium") ?: "medium"
+            val currentSize = prefs.getString("kb_size", "large") ?: "large"
             listOf("small" to "صغير", "medium" to "متوسط", "large" to "كبير").forEach { (id, name) ->
                 sizeRow.addView(button(if (currentSize == id) "✓ $name" else name) {
                     saveSetting("kb_size", id); toast("تم تغيير حجم الكيبورد")
@@ -1016,7 +1028,6 @@ private fun startFlashcardSession(words: List<String>) {
             }
             addView(sizeRow)
 
-            // الشكل
             addView(label("شكل الأزرار:", 14f, colorMuted))
             val styleRow = LinearLayout(this@MainActivity).apply { orientation = LinearLayout.HORIZONTAL; setPadding(0, dp(4), 0, dp(12)) }
             val currentStyle = prefs.getString("kb_style", "rounded") ?: "rounded"
@@ -1027,7 +1038,6 @@ private fun startFlashcardSession(words: List<String>) {
             }
             addView(styleRow)
 
-            // الخلفية
             addView(label("خلفية الكيبورد:", 14f, colorMuted))
             val bgRow = LinearLayout(this@MainActivity).apply { orientation = LinearLayout.HORIZONTAL; setPadding(0, dp(4), 0, dp(4)) }
             val currentBg = prefs.getString("kb_bg_type", "dark") ?: "dark"
@@ -1044,6 +1054,15 @@ private fun startFlashcardSession(words: List<String>) {
                 @Suppress("DEPRECATION") startActivityForResult(intent, REQ_PICK_KB_BG)
             }, LinearLayout.LayoutParams(0, WRAP_CONTENT, 2f))
             addView(bgRow)
+        }
+
+        addCard {
+            addView(label("🔊 الصوت والنطق", 18f, colorGold, true))
+            val isSpeakOnOpen = prefs.getBoolean("speak_on_open", true)
+            addView(button(if (isSpeakOnOpen) "🔊 نطق كلمة اليوم تلقائياً: مفعل" else "🔇 نطق كلمة اليوم تلقائياً: متوقف") {
+                saveSetting("speak_on_open", !isSpeakOnOpen)
+                showSettings()
+            })
         }
 
         addCard {
@@ -1073,7 +1092,6 @@ private fun startFlashcardSession(words: List<String>) {
             REQ_PICK_KB_BG -> {
                 data?.data?.let { uri ->
                     try {
-                        // نأخذ صلاحية دائمة للصورة
                         contentResolver.takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION)
                         saveSetting("kb_bg_uri", uri.toString())
                         saveSetting("kb_bg_type", "image")
