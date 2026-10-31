@@ -1011,12 +1011,38 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
         }
     }
 
+    // ============================================================
+    // [SETTINGS]
+    // ============================================================
     private fun showSettings() {
         clearPage("الإعدادات")
         
+        // تفعيل الكيبورد
+        addCard {
+            addView(label("⌨️ تفعيل لوحة المفاتيح", 18f, colorGold, true))
+            addView(label("لتفعيل TON FOX ككيبورد افتراضي، اتبع الخطوتين:", 14f, colorMuted))
+            gap(this, 8)
+            addView(button("1️⃣ تفعيل TON FOX في النظام", true) {
+                try {
+                    val intent = Intent(android.provider.Settings.ACTION_INPUT_METHOD_SETTINGS)
+                    startActivity(intent)
+                } catch (e: Exception) {
+                    toast("تعذر فتح الإعدادات")
+                }
+            })
+            addView(button("2️⃣ اختيار TON FOX ككيبورد حالي") {
+                try {
+                    val imm = getSystemService(Context.INPUT_METHOD_SERVICE) as InputMethodManager
+                    imm.showInputMethodPicker()
+                } catch (e: Exception) {
+                    toast("تعذر فتح قائمة الكيبورد")
+                }
+            })
+        }
+
         // إعدادات الكيبورد
         addCard {
-            addView(label("⌨️ إعدادات لوحة المفاتيح", 18f, colorGold, true))
+            addView(label("🎨 إعدادات مظهر الكيبورد", 18f, colorGold, true))
             
             addView(label("حجم الكيبورد:", 14f, colorMuted))
             val sizeRow = LinearLayout(this@MainActivity).apply { orientation = LinearLayout.HORIZONTAL; setPadding(0, dp(4), 0, dp(12)) }
