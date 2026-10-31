@@ -145,6 +145,7 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
     private lateinit var root: FrameLayout
     private lateinit var page: LinearLayout
     private lateinit var drawer: LinearLayout
+private lateinit var drawerContent: LinearLayout // <--- أضف هذا السطر
     private lateinit var shade: View
     private var sourceText: EditText? = null
     private var tts: TextToSpeech? = null
@@ -487,47 +488,82 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
     }
 
     private fun buildShell() {
-        window.statusBarColor = colorBg; window.navigationBarColor = colorBg
-        root = FrameLayout(this).apply { setBackgroundColor(colorBg) }
-        val column = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; layoutDirection = View.LAYOUT_DIRECTION_RTL }
-        val header = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL; setPadding(dp(16), dp(16), dp(16), dp(16)); setBackgroundColor(colorPanel) }
-        header.addView(button("☰", true) { toggleDrawer(true) }, LinearLayout.LayoutParams(dp(52), dp(48)))
-        val heading = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(16), 0, 0, 0); layoutParams = LinearLayout.LayoutParams(0, WRAP_CONTENT, 1f) }
-        heading.addView(label("TON FOX 🦊", 22f, colorGold, true))
-        heading.addView(label(if (streakCount > 0) "🔥 $streakCount يوم متواصل" else "مترجم الفرانكو وأكاديمية التعلم", 11f, colorMuted))
-        header.addView(heading)
-        if (streakCount > 0) {
-            val flame = label("🔥", 22f, colorGold); flame.setPadding(dp(8), dp(8), dp(8), dp(8))
-            flame.setOnClickListener { AlertDialog.Builder(this).setTitle("🔥 سلسلة الأيام").setMessage("أنت متواصل منذ $streakCount يوماً!\nعد غداً لتحافظ على سلسلتك.").setPositiveButton("حسناً", null).show() }
-            header.addView(flame)
-        }
-        page = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(16), dp(16), dp(16), dp(32)) }
-        val scroll = ScrollView(this).apply { isFillViewport = true; addView(page) }
-        column.addView(header); column.addView(scroll, LinearLayout.LayoutParams(MATCH_PARENT, 0, 1f))
-        root.addView(column, FrameLayout.LayoutParams(MATCH_PARENT, MATCH_PARENT))
-        shade = View(this).apply { setBackgroundColor(withAlpha(Color.BLACK, 0.8f)); visibility = View.GONE; setOnClickListener { toggleDrawer(false) } }
-        root.addView(shade, FrameLayout.LayoutParams(MATCH_PARENT, MATCH_PARENT))
-        drawer = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(20), dp(24), dp(20), dp(24)); setBackgroundColor(colorPanel); layoutDirection = View.LAYOUT_DIRECTION_RTL; visibility = View.GONE; elevation = dp(16).toFloat() }
-        root.addView(drawer, FrameLayout.LayoutParams(dp(300), MATCH_PARENT, Gravity.RIGHT))
-        buildDrawer(); setContentView(root)
+    window.statusBarColor = colorBg; window.navigationBarColor = colorBg
+    root = FrameLayout(this).apply { setBackgroundColor(colorBg) }
+    val column = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; layoutDirection = View.LAYOUT_DIRECTION_RTL }
+    val header = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL; setPadding(dp(16), dp(16), dp(16), dp(16)); setBackgroundColor(colorPanel) }
+    header.addView(button("☰", true) { toggleDrawer(true) }, LinearLayout.LayoutParams(dp(52), dp(48)))
+    val heading = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(16), 0, 0, 0); layoutParams = LinearLayout.LayoutParams(0, WRAP_CONTENT, 1f) }
+    heading.addView(label("TON FOX 🦊", 22f, colorGold, true))
+    heading.addView(label(if (streakCount > 0) "🔥 $streakCount يوم متواصل" else "مترجم الفرانكو وأكاديمية التعلم", 11f, colorMuted))
+    header.addView(heading)
+    if (streakCount > 0) {
+        val flame = label("🔥", 22f, colorGold); flame.setPadding(dp(8), dp(8), dp(8), dp(8))
+        flame.setOnClickListener { AlertDialog.Builder(this).setTitle("🔥 سلسلة الأيام").setMessage("أنت متواصل منذ $streakCount يوماً!\nعد غداً لتحافظ على سلسلتك.").setPositiveButton("حسناً", null).show() }
+        header.addView(flame)
     }
+    page = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(16), dp(16), dp(16), dp(32)) }
+    val scroll = ScrollView(this).apply { isFillViewport = true; addView(page) }
+    column.addView(header); column.addView(scroll, LinearLayout.LayoutParams(MATCH_PARENT, 0, 1f))
+    root.addView(column, FrameLayout.LayoutParams(MATCH_PARENT, MATCH_PARENT))
+    
+    shade = View(this).apply { setBackgroundColor(withAlpha(Color.BLACK, 0.8f)); visibility = View.GONE; setOnClickListener { toggleDrawer(false) } }
+    root.addView(shade, FrameLayout.LayoutParams(MATCH_PARENT, MATCH_PARENT))
+    
+    // --- التعديل هنا: إضافة ScrollView للقائمة الجانبية ---
+    drawer = LinearLayout(this).apply { 
+        orientation = LinearLayout.VERTICAL
+        setBackgroundColor(colorPanel)
+        layoutDirection = View.LAYOUT_DIRECTION_RTL
+        visibility = View.GONE; elevation = dp(16).toFloat() 
+    }
+    val drawerScroll = ScrollView(this).apply { isFillViewport = true }
+    drawerContent = LinearLayout(this).apply { 
+        orientation = LinearLayout.VERTICAL; setPadding(dp(20), dp(24), dp(20), dp(24)) 
+    }
+    drawerScroll.addView(drawerContent, LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT))
+    drawer.addView(drawerScroll, LinearLayout.LayoutParams(MATCH_PARENT, MATCH_PARENT))
+    
+    root.addView(drawer, FrameLayout.LayoutParams(dp(300), MATCH_PARENT, Gravity.RIGHT))
+    buildDrawer(); setContentView(root)
+}
 
     private fun buildDrawer() {
-        drawer.removeAllViews()
-        drawer.addView(label("TON FOX 🦊", 26f, colorGold, true)); drawer.addView(label("القائمة الرئيسية", 13f, colorMuted)); gap(drawer, 20)
-        val entries = listOf<Pair<String, () -> Unit>>(
-            "الرئيسية" to { showHome() }, "المترجم" to { showTranslator() }, "الأكاديمية" to { showAcademy() },
-            "القاموس" to { showDictionary() }, "قاموسي الشخصي" to { showPersonalDictionary() },
-            "مولّد العبارات" to { showPhraseGenerator() }, "مولّد الأسماء" to { showNameGenerator() },
-            "بطاقات الحفظ (SRS)" to { showFlashcards() }, "المفضلة والسجل" to { showSaved() },
-            "الأوسمة" to { showBadges() }, "المستويات" to { showLevels() }, "التحدي اليومي" to { showDailyChallenge() },
-            "مخطط التقدم" to { showProgressChart() }, "المفضلة السريعة" to { showQuickPhrases() },
-            "الإحصائيات" to { showStatistics() }, "الإعدادات" to { showSettings() }
-        )
-        entries.forEach { (name, fn) -> drawer.addView(button(name) { toggleDrawer(false); fn() }, LinearLayout.LayoutParams(MATCH_PARENT, dp(50)).apply { bottomMargin = dp(6) }) }
-        drawer.addView(View(this), LinearLayout.LayoutParams(1, 0, 1f))
-        drawer.addView(label("المطور: N5CR4 · @N5CR4", 12f, colorMuted))
+    drawerContent.removeAllViews()
+    drawerContent.addView(label("TON FOX 🦊", 26f, colorGold, true))
+    drawerContent.addView(label("القائمة الرئيسية", 13f, colorMuted))
+    gap(drawerContent, 20)
+    
+    val entries = listOf<Pair<String, () -> Unit>>(
+        "الرئيسية" to { showHome() }, 
+        "المترجم" to { showTranslator() }, 
+        "الأكاديمية" to { showAcademy() },
+        "القاموس" to { showDictionary() }, 
+        "قاموسي الشخصي" to { showPersonalDictionary() },
+        "مولّد العبارات" to { showPhraseGenerator() }, 
+        "مولّد الأسماء" to { showNameGenerator() },
+        "بطاقات الحفظ (SRS)" to { showFlashcards() }, 
+        "المفضلة والسجل" to { showSaved() },
+        "الأوسمة" to { showBadges() }, 
+        "المستويات" to { showLevels() }, 
+        "التحدي اليومي" to { showDailyChallenge() },
+        "مخطط التقدم" to { showProgressChart() }, 
+        "المفضلة السريعة" to { showQuickPhrases() },
+        "الإحصائيات" to { showStatistics() }, 
+        "الإعدادات" to { showSettings() },
+        "💬 تواصل مع المطور (@N5CR4)" to { 
+            try { startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("https://t.me/N5CR4"))) } 
+            catch (_: Exception) { toast("تعذر فتح تيليجرام") }
+        }
+    )
+    
+    entries.forEach { (name, fn) ->
+        drawerContent.addView(button(name) { toggleDrawer(false); fn() }, LinearLayout.LayoutParams(MATCH_PARENT, dp(50)).apply { bottomMargin = dp(6) })
     }
+    
+    drawerContent.addView(View(this), LinearLayout.LayoutParams(1, dp(20))) // مسافة في النهاية
+    drawerContent.addView(label("TON FOX V4 · N5CR4", 12f, colorMuted))
+}
 
     private fun toggleDrawer(show: Boolean) {
         if (show) {
