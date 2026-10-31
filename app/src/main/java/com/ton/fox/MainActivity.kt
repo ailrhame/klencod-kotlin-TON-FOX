@@ -228,7 +228,7 @@ class FrancoKeyboardService : InputMethodService() {
                     key.uppercase(Locale.ROOT)
                 } else key
 
-                textSize = if (special) textSize - 2f else textSize
+                this.textSize = if (special) this.textSize - 2f else this.textSize
                 gravity = Gravity.CENTER
                 setTextColor(if (special) gold else textColor)
                 typeface = Typeface.DEFAULT_BOLD
@@ -1336,6 +1336,7 @@ REQ_PICK_KB_BG -> {
         }
     }
         }
+    }
     }
 
     override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, grantResults: IntArray) {
